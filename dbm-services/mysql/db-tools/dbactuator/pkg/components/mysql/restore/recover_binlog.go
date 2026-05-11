@@ -295,7 +295,7 @@ func (r *RecoverBinlog) Init() error {
 	}
 	if r.RecoverOpt.StartTime != "" {
 		if t, err := time.ParseInLocation(time.DateTime, r.RecoverOpt.StartTime, time.Local); err == nil {
-			r.RecoverOpt.StartTime = t.Format(time.RFC3339)
+			r.RecoverOpt.StartTime = t.Local().Format(time.RFC3339)
 		} else if _, err := time.ParseInLocation(time.RFC3339, r.RecoverOpt.StartTime, time.Local); err == nil {
 			// keep
 		} else {
@@ -306,7 +306,7 @@ func (r *RecoverBinlog) Init() error {
 	if r.RecoverOpt.StopTime != "" {
 		var stopTime time.Time
 		if t, err := time.ParseInLocation(time.DateTime, r.RecoverOpt.StopTime, time.Local); err == nil {
-			r.RecoverOpt.StopTime = t.Format(time.RFC3339)
+			r.RecoverOpt.StopTime = t.Local().Format(time.RFC3339)
 		} else if _, err := time.ParseInLocation(time.RFC3339, r.RecoverOpt.StopTime, time.Local); err == nil {
 			// keep
 		} else {
@@ -377,7 +377,20 @@ func (r *RecoverBinlog) buildMysqlOptions() error {
 	if mysqlOpt.MaxAllowedPacket > 0 {
 		r.TgtInstance.Options += fmt.Sprintf(" --max-allowed-packet=%d", mysqlOpt.MaxAllowedPacket)
 	}
-	mysqlClient := r.ToolSet.MustGet(tools.ToolMysqlclient)
+
+	var mysqlClient string
+	if mysqlClient80, err := r.ToolSet.Get(tools.ToolMysqlclient80); err == nil {
+		// 需要确认 dba-toolkit 下的 mysql 8.0 客户端可以用
+		if err = mysqlcomm.MysqlCliHasOption(mysqlClient80, "--help"); err == nil {
+			mysqlClient = mysqlClient80
+		} else {
+			logger.Info("try use mysql client 8.0 got error:", err.Error())
+		}
+	}
+	if mysqlClient == "" {
+		mysqlClient = r.ToolSet.MustGet(tools.ToolMysqlclient)
+		logger.Info("fallback to system mysql client: %s", mysqlClient)
+	}
 	// mysqlOpt.BinaryMode &&
 	if mysqlcomm.MysqlCliHasOption(mysqlClient, "--binary-mode") == nil {
 		r.TgtInstance.Options += " --binary-mode"

@@ -12,21 +12,23 @@ from pathlib import Path
 from typing import Dict
 
 import pymysql
+from backend import env
+from backend.core.encrypt.interceptors import SymmetricInterceptor
 from bkcrypto import constants
 from bkcrypto.asymmetric.options import RSAAsymmetricOptions, SM2AsymmetricOptions
 from bkcrypto.symmetric.options import AESSymmetricOptions, SM4SymmetricOptions
 from blueapps.conf.default_settings import *  # pylint: disable=wildcard-import
 from blueapps.core.celery.celery import app
-from django.db.backends.mysql.features import DatabaseFeatures
-
-from backend import env
-from backend.core.encrypt.interceptors import SymmetricInterceptor
 from blueking.mysql_patch import PatchFeatures
+from django.db.backends.mysql.features import DatabaseFeatures
 
 DatabaseFeatures.minimum_database_version = PatchFeatures.minimum_database_version
 
 if env.RUN_VER == "open":
     from blueapps.patch.settings_open_saas import *  # pylint: disable=wildcard-import
+    # 社区版额外加上bkoauth的配置
+    OAUTH_COOKIES_PARAMS = {"bk_token": "bk_token"}
+    INSTALLED_APPS += ("bkoauth", )
 else:
     from blueapps.patch.settings_paas_services import *  # pylint: disable=wildcard-import
 
@@ -43,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 APP_CODE = env.APP_CODE
 SECRET_KEY = env.SECRET_KEY
-ENVIRONMENT = env.ENVIRONMENT
+BKPAAS_ENVIRONMENT = ENVIRONMENT = env.ENVIRONMENT
 
 CONF_PATH = os.path.abspath(__file__)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(CONF_PATH))
@@ -68,10 +70,12 @@ CORS_ALLOW_HEADERS = (
     "x-csrftoken",
     "HTTP_X_REQUESTED_WITH",
     "time-zone",
+    "traceparent"
 )
 
 ALLOWED_HOSTS = ["*"]
 
+# 安装的APPS
 INSTALLED_APPS += (
     "django_celery_beat",
     "whitenoise.runserver_nostatic",
@@ -144,6 +148,14 @@ INSTALLED_APPS += (
     "backend.db_services.mongodb.password",
 )
 
+if env.ENABLE_DBM_AI:
+    INSTALLED_APPS += (
+        # aidev
+        "aidev_bkplugin",
+        "backend.dbm_aiagent",
+    )
+
+# 中间件
 MIDDLEWARE = (
     # 跨域中间件
     "corsheaders.middleware.CorsMiddleware",
@@ -155,8 +167,6 @@ MIDDLEWARE = (
     "apigw_manager.apigw.authentication.ApiGatewayJWTGenericMiddleware",
     "apigw_manager.apigw.authentication.ApiGatewayJWTAppMiddleware",
     "apigw_manager.apigw.authentication.ApiGatewayJWTUserMiddleware",
-    # 分析页面、接口和SQL调用耗时调试工具
-    "debug_toolbar.middleware.DebugToolbarMiddleware",
     # request instance provider
     "blueapps.middleware.request_provider.RequestProvider",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -182,6 +192,10 @@ MIDDLEWARE = (
     "backend.bk_web.middleware.RequestProviderMiddleware",
 )
 
+if DEBUG and env.DEBUG_TOOL_BAR:
+    MIDDLEWARE += ("debug_toolbar.middleware.DebugToolbarMiddleware",)
+
+# 认证后端
 AUTHENTICATION_BACKENDS = [
     *AUTHENTICATION_BACKENDS,
     "backend.bk_web.middleware.JWTUserModelBackend",
@@ -251,9 +265,30 @@ DATABASES = {
             "RECYCLE": 60 * 60,
         },
     },
+    "stats_db": {
+        "ENGINE": "dj_db_conn_pool.backends.mysql",
+        "NAME": os.environ.get("STATS_DB_NAME", APP_CODE),
+        "USER": os.environ.get("STATS_DB_USER", "root"),
+        "PASSWORD": os.environ.get("STATS_DB_PASSWORD", ""),
+        "HOST": os.environ.get("STATS_DB_HOST", "127.0.0.1"),
+        "PORT": os.environ.get("STATS_DB_PORT", "3306"),
+        "OPTIONS": {"init_command": """SET default_storage_engine=INNODB,time_zone='+00:00'""", "charset": "utf8mb4"},
+        "TEST": {
+            "CHARSET": "utf8",
+            "COLLATION": "utf8_general_ci",
+        },
+        "POOL_OPTIONS": {
+            "POOL_SIZE": int(os.environ.get("DB_POOL_SIZE", 5)),
+            "MAX_OVERFLOW": int(os.environ.get("DB_POOL_MAX_OVERFLOW", 10)),
+            "RECYCLE": 60 * 60,
+        },
+    },
 }
 
-DATABASE_ROUTERS = ["backend.db_report.database_router.ReportRouter"]
+DATABASE_ROUTERS = [
+    "backend.db_report.database_router.ReportRouter",
+    "backend.db_report.database_router.StatsRouter",
+]
 
 # Cache - 缓存后端采用redis
 # https://docs.djangoproject.com/en/3.2/ref/settings/#cache
@@ -405,6 +440,8 @@ CSRF_COOKIE_DOMAIN = SESSION_COOKIE_DOMAIN
 REQUEST_ID_HEADER = "HTTP_X_REQUEST_ID"
 
 APIGW_PUBLIC_KEY = env.APIGW_PUBLIC_KEY
+
+OAUTH_API_URL = env.OAUTH_API_URL
 
 # DRF 配置
 REST_FRAMEWORK = {
@@ -622,6 +659,10 @@ if env.BKAPP_MONITOR_REPORTER_ENABLE:
     config.monitor_celery_report_config()
     config.monitor_web_report_config()
 
+
+# 接入告警屏蔽的延迟秒, 默认 10s 无延迟，最小 10s
+DISABLE_ALARM_SHIELD_DELAY = max(int(os.getenv("DISABLE_ALARM_SHIELD_DELAY", 10)), 10)
+
 # 全局启用 pyinstrument，或者在url后面加上?profile=1
 # PYINSTRUMENT_PROFILE_DIR = os.path.join(STATIC_ROOT, 'assets/perf')
 
@@ -629,174 +670,15 @@ if env.BKAPP_MONITOR_REPORTER_ENABLE:
 if env.DEBUG_TOOL_BAR:
     INTERNAL_IPS = ["127.0.0.1", "localhost"]
 
-# 开启MCP server
-BK_APIGW_STAGE_ENABLE_MCP_SERVERS = env.BK_APIGW_STAGE_ENABLE_MCP_SERVERS
-BK_APIGW_STAGE_MCP_SERVERS = [
-    # {
-    #     "name": "dbm-mcp",
-    #     "description": "dbm-mcp",
-    #     # 主动授权 app_code
-    #     "target_app_codes": [APP_CODE],
-    #     "labels": ["dbm"],
-    #     # 是否启用：1-启用，0-停止
-    #     "status": 1,
-    #     # 是否公开
-    #     "is_public": False,
-    #     # 自动发现并填充该 MCP 服务器对应的工具
-    #     "tools": [],
-    # },
-    {
-        "name": "mysql-query",
-        "description": """mysql relate information query, such as
-        1. mysql instance status, include run-time variables, status, explain sql and so on
-        2. tendbsingle/tendbha/tendbcluster cluster info""",
-        # 主动授权 app_code
-        "target_app_codes": [APP_CODE],
-        "labels": ["mysql-query"],
-        # 是否启用：1-启用，0-停止
-        "status": 1,
-        # 是否公开
-        "is_public": False,
-        # 自动发现并填充该 MCP 服务器对应的工具
-        "tools": [],
-    },
-    {
-        "name": "mysql-bill",
-        "description": """create mysql bill""",
-        # 主动授权 app_code
-        "target_app_codes": [APP_CODE],
-        "labels": ["mysql-bill"],
-        # 是否启用：1-启用，0-停止
-        "status": 1,
-        # 是否公开
-        "is_public": False,
-        # 自动发现并填充该 MCP 服务器对应的工具
-        "tools": [],
-    },
-    {
-        "name": "dbmeta-query",
-        "description": """query dbm meta info""",
-        # 主动授权 app_code
-        "target_app_codes": [APP_CODE],
-        "labels": ["dbmeta-query"],
-        # 是否启用：1-启用，0-停止
-        "status": 1,
-        # 是否公开
-        "is_public": False,
-        # 自动发现并填充该 MCP 服务器对应的工具
-        "tools": [],
-    },
-    {
-        "name": "sqlserver-query",
-        "description": """sqlserver relate information query, such as
-        1. query result has slow queries count, query_time, rows_scan,rows_sent
-        2. need cluster_domain and instance_role provided
-        """,
-        # 主动授权 app_code
-        "target_app_codes": [APP_CODE],
-        "labels": ["sqlserver-query"],
-        # 是否启用：1-启用，0-停止
-        "status": 1,
-        # 是否公开
-        "is_public": False,
-        # 自动发现并填充该 MCP 服务器对应的工具
-        "tools": [],
-    },
-    {
-        "name": "sql-syntax-check",
-        "description": """SQL syntax check and validation services for TenDBHA/TenDBCluster.
-        SQL语法检查与验证服务，适用于TenDBHA/TenDBCluster集群。
 
-        Features / 功能:
-        1. Validate SQL syntax across MySQL 5.5/5.6/5.7/8.0 versions - 支持多版本MySQL语法验证
-        2. Check DBM platform constraints (banned commands, high-risk operations) - 检查DBM平台约束（禁用命令、高风险操作）
-        3. SQL statement/file compatibility checking - SQL语句/文件兼容性检查
-
-        Use Cases / 使用场景:
-        - Validate SQL before execution to prevent syntax errors - 执行前验证SQL防止语法错误
-        - Check SQL compatibility across different MySQL versions - 检查SQL在不同MySQL版本的兼容性
-        - Detect banned commands (e.g., TRUNCATE) and high-risk operations (e.g., DROP DATABASE) - 检测禁用命令和高风险操作
-        """,
-        # 主动授权 app_code
-        "target_app_codes": [APP_CODE],
-        "labels": ["sql-syntax-check"],
-        # 是否启用：1-启用，0-停止
-        "status": 1,
-        # 是否公开
-        "is_public": False,
-        # 自动发现并填充该 MCP 服务器对应的工具
-        "tools": [],
-    },
-    {
-        "name": "bill-query",
-        "description": """dbm bill query""",
-        # 主动授权 app_code
-        "target_app_codes": [APP_CODE],
-        "labels": ["bill-query"],
-        # 是否启用：1-启用，0-停止
-        "status": 1,
-        # 是否公开
-        "is_public": False,
-        # 自动发现并填充该 MCP 服务器对应的工具
-        "tools": [],
-    },
-    {
-        "name": "resource-query",
-        "description": """DB resource management services, including:
-        1. Query resource request parameters by bill_id or task_id
-        2. Resource allocation and management
-        """,
-        # 主动授权 app_code
-        "target_app_codes": [APP_CODE],
-        "labels": ["resource-query"],
-        # 是否启用：1-启用，0-停止
-        "status": 1,
-        # 是否公开
-        "is_public": False,
-        # 自动发现并填充该 MCP 服务器对应的工具
-        "tools": [],
-    },
-    {
-        "name": "redis-query-meta",
-        "description": """redis meta query. """,
-        # 主动授权 app_code
-        "target_app_codes": [APP_CODE],
-        "labels": ["redis-query-meta"],
-        # 是否启用：1-启用，0-停止
-        "status": 1,
-        # 是否公开
-        "is_public": False,
-        # 自动发现并填充该 MCP 服务器对应的工具
-        "tools": [],
-    },
-    {
-        "name": "redis-query-status",
-        "description": """ redis instance running info.""",
-        # 主动授权 app_code
-        "target_app_codes": [APP_CODE],
-        "labels": ["redis-query-status"],
-        # 是否启用：1-启用，0-停止
-        "status": 1,
-        # 是否公开
-        "is_public": False,
-        # 自动发现并填充该 MCP 服务器对应的工具
-        "tools": [],
-    },
-    {
-        "name": "redis-bill",
-        "description": """create redis bill""",
-        # 主动授权 app_code
-        "target_app_codes": [APP_CODE],
-        "labels": ["redis-bill"],
-        # 是否启用：1-启用，0-停止
-        "status": 1,
-        # 是否公开
-        "is_public": False,
-        # 自动发现并填充该 MCP 服务器对应的工具
-        "tools": [],
-    },
-]
-
-# 接入告警屏蔽的延迟秒, 默认 10s 无延迟
-# 最小 10s
-DISABLE_ALARM_SHIELD_DELAY = max(int(os.getenv("DISABLE_ALARM_SHIELD_DELAY", 10)), 10)
+# ================================ DBM AIDEV 配置 =========================================
+# 基础的Agent配置
+AGENT_APP_CODE = env.BK_AIDEV_AGENT_APP_CODE or env.APP_CODE
+AGENT_APP_SECRET = env.BK_AIDEV_AGENT_APP_SECRET or env.SECRET_KEY
+BK_AIDEV_APIGW_ENDPOINT = env.BK_AIDEV_APIGW_ENDPOINT
+# 默认关闭 AIDEV MCP server
+BK_APIGW_STAGE_ENABLE_MCP_SERVERS = False
+BK_APIGW_STAGE_MCP_SERVERS = []
+# ENABLE_DBM_AI 时才加载完整配置
+if env.ENABLE_DBM_AI:
+    from backend.dbm_aiagent.config import *  # noqa: F401,F403  # pylint: disable=wildcard-import,unused-wildcard-import

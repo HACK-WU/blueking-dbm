@@ -55,7 +55,9 @@ class SqlserverDataExportFlow(SqlserverSQLExecuteFlow):
         # 合并下发需要变更的文件，不同的bk_cloud_id需要分组处理
         target_hosts = [
             Host(
-                ip=c.storageinstance_set.get(instance_inner_role=self.data["select_role"]).machine.ip,
+                ip=c.storageinstance_set.get(
+                    instance_inner_role=self.data["select_role"], is_stand_by=True
+                ).machine.ip,
                 bk_cloud_id=c.bk_cloud_id,
             )
             for c in clusters
@@ -105,17 +107,18 @@ class SqlserverDataExportFlow(SqlserverSQLExecuteFlow):
                         component_kwargs={
                             "bk_biz_id": cluster.bk_biz_id,
                             "bk_cloud_id": cluster.bk_cloud_id,
+                            "cluster_domain": cluster.immute_domain,
+                            "instance_role": self.data["select_role"],
                             "exec_ports": [master_instance.port],
                             "sql_file_path": self.sql_target_path,
                             "execute_objects": self.data["execute_objects"],
-                            "zip_file_name": f"{cluster.immute_domain}_{ self.data['select_role']}_"
-                            f"{master_instance.machine.ip}_{master_instance.port}_data_export.zip",
+                            "zip_file_name": self.data["dump_file_names"].get(str(cluster.id)),
                         },
                     )
                 ),
             )
 
-            sub_pipelines.append(sub_pipeline.build_sub_process(sub_name=_("{}SQL文件导入".format(cluster.name))))
-
+            sub_pipelines.append(sub_pipeline.build_sub_process(sub_name=_("{}集群数据导出".format(cluster.immute_domain))))
         main_pipeline.add_parallel_sub_pipeline(sub_flow_list=sub_pipelines)
-        main_pipeline.run_pipeline()
+        # main_pipeline.run_pipeline()
+        main_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=self.data["cluster_ids"])

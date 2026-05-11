@@ -35,6 +35,7 @@ import (
 	"dbm-services/common/go-pubpkg/logger"
 	"dbm-services/mysql/db-simulation/app"
 	"dbm-services/mysql/db-simulation/app/config"
+	"dbm-services/mysql/db-simulation/model"
 )
 
 // CheckSyntax 语法检查
@@ -58,6 +59,8 @@ type TmysqlParseFile struct {
 
 // CheckSQLFileParam TODO
 type CheckSQLFileParam struct {
+	BkBizID        int                 `json:"bk_biz_id"`
+	ClusterType    string              `json:"cluster_type"`
 	BkRepoBasePath string              `json:"bkrepo_base_path"`
 	FileNames      []string            `json:"file_names"`
 	ExecuteObjects []ExecuteSQLFileObj `json:"execute_objects"`
@@ -79,6 +82,82 @@ type TmysqlParse struct {
 	TmysqlParseBinPath string
 	BaseWorkdir        string
 	mu                 sync.Mutex
+	TendbClusterSyntaxCheckOptions
+}
+
+// TendbClusterSyntaxCheckOptions tendbcluster集群语法检查选项
+type TendbClusterSyntaxCheckOptions struct {
+	FastCheckMap     map[string]struct{}
+	AllowProcedureOp bool `json:"allow_procedure_op"` // 允许操作存储过程
+	AllowEventOp     bool `json:"allow_event_op"`     // 允许操作事件
+	AllowFunctionOp  bool `json:"allow_function_op"`  // 允许操作函数
+	AllowTriggerOp   bool `json:"allow_trigger_op"`   // 允许操作触发器
+	AllowViewOp      bool `json:"allow_view_op"`      // 允许操作视图
+	AllowAlterDbOp   bool `json:"allow_alter_db_op"`  // 允许操作数据库
+	AllowFlushOp     bool `json:"allow_flush_op"`     // 允许操作flush
+}
+
+// IsDisabledOperation 检查是否禁止操作
+func (tc *TendbClusterSyntaxCheckOptions) IsDisabledOperation(command_type string) bool {
+	switch command_type {
+	case SQLTypeCreateProcedure, SQLTypeDropProcedure:
+		return !tc.AllowProcedureOp
+	case SQLTypeCreateEvent, SQLTypeDropEvent:
+		return !tc.AllowEventOp
+	case SQLTypeCreateFunction, SQLTypeDropFunction:
+		return !tc.AllowFunctionOp
+	case SQLTypeCreateTrigger, SQLTypeDropTrigger:
+		return !tc.AllowTriggerOp
+	case SQLTypeCreateView, SQLTypeDropView:
+		return !tc.AllowViewOp
+	case SQLTypeAlterDb:
+		return !tc.AllowAlterDbOp
+	case SQLTypeFlush:
+		return !tc.AllowFlushOp
+	}
+	return false
+}
+
+// InitTendbClusterSyntaxCheckOptions 初始化tendbcluster集群语法检查选项
+func (tf *TmysqlParseFile) InitTendbClusterSyntaxCheckOptions() {
+	tf.TendbClusterSyntaxCheckOptions = TendbClusterSyntaxCheckOptions{
+		AllowProcedureOp: false,
+		AllowEventOp:     false,
+		AllowFunctionOp:  false,
+		AllowTriggerOp:   false,
+		AllowViewOp:      false,
+		FastCheckMap:     make(map[string]struct{}),
+	}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeCreateProcedure] = struct{}{}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeDropProcedure] = struct{}{}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeCreateEvent] = struct{}{}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeDropEvent] = struct{}{}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeCreateFunction] = struct{}{}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeDropFunction] = struct{}{}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeCreateTrigger] = struct{}{}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeCreateView] = struct{}{}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeDropTrigger] = struct{}{}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeDropView] = struct{}{}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeFlush] = struct{}{}
+	tf.TendbClusterSyntaxCheckOptions.FastCheckMap[SQLTypeAlterDb] = struct{}{}
+	if tf.Param.BkBizID <= 0 {
+		return
+	}
+	bizIds, err := model.GetWhitelistBizIds(app.TendbCluster)
+	if err != nil {
+		logger.Error("get whitelist biz ids failed %s", err.Error())
+		return
+	}
+	if lo.Contains(bizIds, tf.Param.BkBizID) {
+		tf.TendbClusterSyntaxCheckOptions.AllowProcedureOp = true
+		tf.TendbClusterSyntaxCheckOptions.AllowEventOp = true
+		tf.TendbClusterSyntaxCheckOptions.AllowFunctionOp = true
+		tf.TendbClusterSyntaxCheckOptions.AllowTriggerOp = true
+		tf.TendbClusterSyntaxCheckOptions.AllowViewOp = true
+		tf.TendbClusterSyntaxCheckOptions.AllowAlterDbOp = true
+		tf.TendbClusterSyntaxCheckOptions.AllowFlushOp = true
+		return
+	}
 }
 
 // AddFileResult add file syntax check result
@@ -121,6 +200,22 @@ type RiskInfo struct {
 // DdlMapFileSubffix  execution parsing sql provisional results document
 const DdlMapFileSubffix = ".tbl.map"
 
+// RunSyntaxCheck 运行语法检查
+func (tf *TmysqlParseFile) RunSyntaxCheck(versions []string) (result map[string]*CheckInfo, err error) {
+	var data map[string]*CheckInfo
+	logger.Info("cluster type :%s", tf.Param.ClusterType)
+	switch strings.ToLower(tf.Param.ClusterType) {
+	case app.Spider, app.TendbCluster:
+		tf.InitTendbClusterSyntaxCheckOptions()
+		data, err = tf.Do(app.Spider, []string{""})
+	case app.MySQL:
+		data, err = tf.Do(app.MySQL, versions)
+	default:
+		data, err = tf.Do(app.MySQL, versions)
+	}
+	return data, err
+}
+
 // Do  运行语法检查 For SQL 文件
 func (tf *TmysqlParseFile) Do(dbtype string, versions []string) (result map[string]*CheckInfo, err error) {
 	tf.mu = sync.Mutex{}
@@ -160,13 +255,13 @@ func (tf *TmysqlParseFile) Do(dbtype string, versions []string) (result map[stri
 // 如果执行对象是系统库，则检查文件的第一行
 // 如果第一行命令不是 USE DB 或 CREATE DATABASE，则追加警告信息
 func (tf *TmysqlParseFile) CheckSystemDBOperation(version string) error {
+	sysdbs := cmutil.GetGcsSystemDatabases(version)
 	for _, executeObject := range tf.Param.ExecuteObjects {
 		if len(executeObject.DbNames) == 0 {
 			continue
 		}
 		// 检查目标是否为系统库
 		targetIsSysDb := false
-		sysdbs := cmutil.GetGcsSystemDatabases(version)
 		for _, db := range executeObject.DbNames {
 			if lo.Contains(sysdbs, db) {
 				targetIsSysDb = true
@@ -177,77 +272,102 @@ func (tf *TmysqlParseFile) CheckSystemDBOperation(version string) error {
 		if !targetIsSysDb {
 			continue
 		}
-
 		// 检查每个 SQL 文件的第一行
 		for _, sqlFile := range executeObject.SQLFiles {
-			// 初始化结果（如果不存在）
-			if tf.result[sqlFile] == nil {
-				tf.result[sqlFile] = &CheckInfo{}
-			}
-			// 如果语法检查都是错误的 就不用分析了
-			// 因为无法解析sql里面的真是dbname
-			if len(tf.result[sqlFile].SyntaxFailInfos) > 0 {
-				continue
-			}
-
-			f, err := os.Open(tf.getAbsOutputFilePath(sqlFile, version))
-			if err != nil {
-				logger.Error("open file failed %s", err.Error())
+			if err := tf.checkSysDbOpInOneFile(sqlFile, version, sysdbs, executeObject.DbNames); err != nil {
 				return err
-			}
-			defer f.Close()
-
-			reader := bufio.NewReader(f)
-			// 只读取第一行
-			line, isPrefix, errx := reader.ReadLine()
-			if errx != nil {
-				if errx == io.EOF {
-					continue
-				}
-				logger.Error("read Line Error %s", errx.Error())
-				return errx
-			}
-			var buf []byte
-			buf = append(buf, line...)
-			for isPrefix {
-				line, isPrefix, errx = reader.ReadLine()
-				if errx != nil {
-					logger.Error("read Line Error %s", errx.Error())
-					return errx
-				}
-				buf = append(buf, line...)
-			}
-			bs := buf
-
-			if len(bs) == 0 {
-				logger.Info("blank line skip")
-				continue
-			}
-
-			var res ParseLineQueryBase
-			if err = json.Unmarshal(bs, &res); err != nil {
-				logger.Error("json unmarshal line:%s failed %s", string(bs), err.Error())
-				return err
-			}
-
-			// 检查命令类型
-			if cmutil.ElementNotInArry(res.Command, []string{SQLTypeCreateDb, SQLTypeUseDb}) &&
-				(res.DbName == "" || slices.Contains(sysdbs, res.DbName)) {
-				tf.result[sqlFile].BanWarnings = append(tf.result[sqlFile].BanWarnings, RiskInfo{
-					Line:     int64(res.QueryId),
-					Sqltext:  res.QueryString,
-					WarnInfo: fmt.Sprintf("不允许直接在系统库%v,操作", executeObject.DbNames),
-				})
 			}
 		}
 	}
 	return nil
 }
 
+// checkSysDbOpInOneFile 检查单个 SQL 文件中是否存在直接操作系统库的语句。
+//
+// 抽出独立方法的目的：让 `defer f.Close()` 落在本方法的作用域内，每个文件处理完
+// 即立刻关闭 fd；原先把 defer 直接写在 `for sqlFile := range ...` 循环里，
+// 由于 Go 的 defer 是函数级而非块级，所有 `f.Close` 都会推迟到 `CheckSystemDBOperation`
+// 整个函数返回时才统一执行，导致 fd 累积、极端场景下耗尽进程 fd 上限。
+func (tf *TmysqlParseFile) checkSysDbOpInOneFile(sqlFile, version string,
+	sysdbs, targetDbs []string) error {
+	// 初始化结果（如果不存在）
+	if tf.result[sqlFile] == nil {
+		tf.result[sqlFile] = &CheckInfo{}
+	}
+	// 如果语法检查都是错误的 就不用分析了
+	// 因为无法解析sql里面的真实dbname
+	if len(tf.result[sqlFile].SyntaxFailInfos) > 0 {
+		return nil
+	}
+
+	f, err := os.Open(tf.getAbsOutputFilePath(sqlFile, version))
+	if err != nil {
+		logger.Error("open file failed %s", err.Error())
+		return err
+	}
+	defer f.Close()
+
+	reader := bufio.NewReader(f)
+	for {
+		line, isPrefix, errx := reader.ReadLine()
+		if errx != nil {
+			if errx == io.EOF {
+				break
+			}
+			logger.Error("read Line Error %s", errx.Error())
+			return errx
+		}
+		var buf []byte
+		buf = append(buf, line...)
+		for isPrefix {
+			line, isPrefix, errx = reader.ReadLine()
+			if errx != nil {
+				logger.Error("read Line Error %s", errx.Error())
+				return errx
+			}
+			buf = append(buf, line...)
+		}
+		if len(buf) == 0 {
+			logger.Info("blank line skip")
+			continue
+		}
+		var res ParseLineQueryBase
+		if err := json.Unmarshal(buf, &res); err != nil {
+			logger.Error("json unmarshal line:%s failed %s", string(buf), err.Error())
+			return err
+		}
+		if res.Command == SQLTypeSetOption {
+			continue
+		}
+		if res.Command == SQLTypeUseDb && cmutil.ElementNotInArry(res.DbName, sysdbs) {
+			break
+		}
+		if res.Command == "" && res.DbName == "" && res.QueryId == 0 {
+			// 处理最后一行的元信息：
+			// {
+			// 	"min_mysql_version": null,
+			// 	"max_mysql_version": null
+			// }
+			break
+		}
+		// 检查命令类型
+		logger.Info("bs:%s,res.Command:%s,res.DbName:%s", string(buf), res.Command, res.DbName)
+		if cmutil.ElementNotInArry(res.Command, []string{SQLTypeCreateDb, SQLTypeUseDb}) &&
+			(res.DbName == "" || slices.Contains(sysdbs, res.DbName)) {
+			tf.result[sqlFile].BanWarnings = append(tf.result[sqlFile].BanWarnings, RiskInfo{
+				Line:     int64(res.QueryId),
+				Sqltext:  res.QueryString,
+				WarnInfo: fmt.Sprintf("不允许直接在系统库%v,操作", targetDbs),
+			})
+		}
+	}
+	return nil
+}
+
 // CheckConflictUsedb check input db conflict with use db
-func (tf *TmysqlParseFile) CheckConflictUsedb(version string) (err error) {
+func (tf *TmysqlParseFile) CheckConflictUsedb(version string) error {
 	// 先检查系统库操作
-	if err = tf.CheckSystemDBOperation(version); err != nil {
+	if err := tf.CheckSystemDBOperation(version); err != nil {
 		logger.Error("check system db operation failed %s", err.Error())
 		return err
 	}
@@ -260,86 +380,130 @@ func (tf *TmysqlParseFile) CheckConflictUsedb(version string) (err error) {
 			!strings.Contains(executeObject.DbNames[0], "?") {
 			continue
 		}
-		var buf []byte
 		for _, sqlFile := range executeObject.SQLFiles {
-			f, err := os.Open(tf.getAbsOutputFilePath(sqlFile, version))
-			if err != nil {
-				logger.Error("open file failed %s", err.Error())
+			if err := tf.checkConflictUsedbInOneFile(sqlFile, version, executeObject.DbNames); err != nil {
 				return err
-			}
-			defer f.Close()
-			reader := bufio.NewReader(f)
-			for {
-				line, isPrefix, errx := reader.ReadLine()
-				if errx != nil {
-					if errx == io.EOF {
-						break
-					}
-					logger.Error("read Line Error %s", errx.Error())
-					return errx
-				}
-				buf = append(buf, line...)
-				if isPrefix {
-					continue
-				}
-				bs := buf
-				buf = []byte{}
-				var res ParseLineQueryBase
-				if len(bs) == 0 {
-					logger.Info("blank line skip")
-					continue
-				}
-				if err = json.Unmarshal(bs, &res); err != nil {
-					logger.Error("json unmarshal line:%s failed %s", string(bs), err.Error())
-					return err
-				}
-
-				if res.Command == SQLTypeUseDb {
-					tf.result[sqlFile].BanWarnings = append(tf.result[sqlFile].BanWarnings, RiskInfo{
-						Line:    int64(res.QueryId),
-						Sqltext: res.QueryString,
-						WarnInfo: fmt.Sprintf("表单中输入的变更对象%v可能存在多个,但是SQL文件显示的使用use %s,可能会造成SQL文件重复执行,请正确理解表单语义,修改后在提交",
-							executeObject.DbNames,
-							res.DbName),
-					})
-					return nil
-				}
 			}
 		}
 	}
 	return nil
 }
 
-func (tf *TmysqlParseFile) doSingleVersion(dbtype string, mysqlVersion string) (err error) {
-	errChan := make(chan error)
-	ExecutedSqlFileChan := make(chan string, len(tf.Param.FileNames))
-	signalChan := make(chan struct{})
+// checkConflictUsedbInOneFile 检查单个 SQL 文件中的 USE DB 是否与表单输入的变更对象冲突。
+//
+// 抽出独立方法解决了三个问题：
+//  1. fd 泄漏：原实现把 `defer f.Close()` 写在 `for sqlFile := range ...` 循环里，
+//     由于 defer 是函数级，所有 fd 会累积到 `CheckConflictUsedb` 整个函数 return
+//     时才一起释放。抽到本方法后每文件处理完即关闭。
+//  2. 漏检：原实现命中第一条 USE DB 后直接 `return nil`，把外两层循环也终止了；
+//     效果是只要任意一个 SQL 文件出现一次 USE DB，后续所有 executeObject 和
+//     sqlFile 全部不再检查。抽出后 `return nil` 仅跳出当前文件扫描，外层主函数
+//     会继续 iterate 后续文件 / 对象，与函数注释意图一致。
+//  3. 跨文件 buf 污染：原 `var buf []byte` 声明在 SQLFiles 循环外，上一文件最后
+//     一行若未完整消费（极端场景），残留 buf 会污染下一文件首行的 JSON 解析。
+//     抽到本方法后 buf 是文件级局部变量，跨文件相互隔离。
+func (tf *TmysqlParseFile) checkConflictUsedbInOneFile(sqlFile, version string,
+	dbNames []string) error {
+	f, err := os.Open(tf.getAbsOutputFilePath(sqlFile, version))
+	if err != nil {
+		logger.Error("open file failed %s", err.Error())
+		return err
+	}
+	defer f.Close()
+
+	var buf []byte
+	reader := bufio.NewReader(f)
+	for {
+		line, isPrefix, errx := reader.ReadLine()
+		if errx != nil {
+			if errx == io.EOF {
+				break
+			}
+			logger.Error("read Line Error %s", errx.Error())
+			return errx
+		}
+		buf = append(buf, line...)
+		if isPrefix {
+			continue
+		}
+		bs := buf
+		buf = []byte{}
+		if len(bs) == 0 {
+			logger.Info("blank line skip")
+			continue
+		}
+		var res ParseLineQueryBase
+		if err := json.Unmarshal(bs, &res); err != nil {
+			logger.Error("json unmarshal line:%s failed %s", string(bs), err.Error())
+			return err
+		}
+
+		if res.Command == SQLTypeUseDb {
+			// 防御：如果 result 还没初始化（理论上 doSingleVersion 已经写过，
+			// 但 CheckConflictUsedb 调用时机不依赖这一点），避免 nil map 写入。
+			if tf.result[sqlFile] == nil {
+				tf.result[sqlFile] = &CheckInfo{}
+			}
+			tf.result[sqlFile].BanWarnings = append(tf.result[sqlFile].BanWarnings, RiskInfo{
+				Line:    int64(res.QueryId),
+				Sqltext: res.QueryString,
+				WarnInfo: fmt.Sprintf("表单中输入的变更对象%v可能存在多个,但是SQL文件显示的使用use %s,可能会造成SQL文件重复执行,请正确理解表单语义,修改后在提交",
+					dbNames,
+					res.DbName),
+			})
+			// 命中即停止当前文件的扫描，外层会继续检查后续 sqlFile / executeObject。
+			return nil
+		}
+	}
+	return nil
+}
+
+// doSingleVersion 针对单个 mysql 版本执行：tmysqlparse 解析 + 解析结果分析。
+//
+// 并发模型：producer/consumer
+//   - producer goroutine: tf.Execute 把成功解析完的文件名写入 executedSqlFileCh
+//   - consumer goroutine: tf.AnalyzeParseResult 从 channel 读取并分析
+//
+// 同步约束（必须遵守，否则会引发 goroutine 泄漏 / 数据竞争）：
+//  1. close(executedSqlFileCh) 必须在 producer 退出时无条件执行，否则 consumer
+//     的 range 永远不会结束。这里用 defer 保证 panic / error 路径都 close。
+//  2. 函数返回前必须等待两个 goroutine 都跑完（wg.Wait），否则：
+//     - 后台 goroutine 可能在 caller 拿到 tf.result 之后继续写入，造成数据竞争；
+//     - 当前函数所在进程是常驻 web 服务，caller 提前 return 不会终止子 goroutine。
+//  3. 用 errors.Join 收集两个 goroutine 的错误，避免任一错误被丢弃。
+func (tf *TmysqlParseFile) doSingleVersion(dbtype string, mysqlVersion string) error {
+	executedSqlFileCh := make(chan string, len(tf.Param.FileNames))
+
+	var (
+		wg         sync.WaitGroup
+		execErr    error
+		analyzeErr error
+	)
+	wg.Add(2)
 
 	go func() {
-		if err = tf.Execute(ExecutedSqlFileChan, mysqlVersion); err != nil {
+		defer wg.Done()
+		defer close(executedSqlFileCh)
+		if err := tf.Execute(executedSqlFileCh, mysqlVersion); err != nil {
 			logger.Error("failed to execute tmysqlparse: %s", err.Error())
-			errChan <- err
+			execErr = err
 		}
-		close(ExecutedSqlFileChan)
 	}()
 
-	// 对tmysqlparse的处理结果进行分析，为json文件，后面用到了rule
 	go func() {
+		defer wg.Done()
 		logger.Info("start to analyze the parsing result")
-		if err = tf.AnalyzeParseResult(ExecutedSqlFileChan, mysqlVersion, dbtype); err != nil {
+		if err := tf.AnalyzeParseResult(executedSqlFileCh, mysqlVersion, dbtype); err != nil {
 			logger.Error("failed to analyze the parsing result:%s", err.Error())
-			errChan <- err
+			analyzeErr = err
 		}
-		signalChan <- struct{}{}
 	}()
 
-	select {
-	case err := <-errChan:
+	wg.Wait()
+	logger.Info("analyze the parsing result done")
+	if err := errors.Join(execErr, analyzeErr); err != nil {
 		logger.Error("failed to do sytax check:%s", err.Error())
 		return err
-	case <-signalChan:
-		logger.Info("analyze the parsing result done")
-		break
 	}
 	return nil
 }
@@ -750,6 +914,17 @@ func (t *TmysqlParse) AnalyzeOne(inputfileName, mysqlVersion, dbtype string) (er
 				goto END
 			}
 		case app.Spider:
+			if _, ok := t.TendbClusterSyntaxCheckOptions.FastCheckMap[res.Command]; ok {
+				if t.IsDisabledOperation(res.Command) {
+					checkResult.BanWarnings = append(checkResult.BanWarnings, RiskInfo{
+						Line:        int64(res.QueryId),
+						Sqltext:     res.QueryString,
+						CommandType: res.Command,
+						WarnInfo:    fmt.Sprintf("禁止操作: %s,需要开始请找DBA协商", res.Command),
+					})
+					continue
+				}
+			}
 			checkResult.parseResult(SR.CommandRule.HighRiskCommandRule, res, mysqlVersion)
 			checkResult.parseResult(SR.CommandRule.BanCommandRule, res, mysqlVersion)
 			err = checkResult.runSpidercheck(ddlTbls, res, bs, mysqlVersion)
@@ -770,6 +945,8 @@ func (c *CheckInfo) runSpidercheck(ddlTbls map[string][]string, res ParseLineQue
 	mysqlVersion string) (err error) {
 	var sc SpiderChecker
 	// 其他规则分析
+	logger.Info("run spider check")
+	logger.Info("res: %+v", res)
 	switch res.Command {
 	case SQLTypeCreateTable:
 		var o CreateTableResult
@@ -779,7 +956,7 @@ func (c *CheckInfo) runSpidercheck(ddlTbls map[string][]string, res ParseLineQue
 		}
 		o.TableOptionMap = ConvertTableOptionToMap(o.TableOptions)
 		sc = o
-		// 如果dbname为空，则实际库名由参数指定,无特殊情况
+		// 如果dbName为空，则实际库名由参数指定,无特殊情况
 		ddlTbls[o.DbName] = append(ddlTbls[o.DbName], o.TableName)
 	case SQLTypeCreateDb:
 		var o CreateDBResult
@@ -809,6 +986,14 @@ func (c *CheckInfo) runSpidercheck(ddlTbls map[string][]string, res ParseLineQue
 			logger.Error("json unmarshal line failed %s", err.Error())
 			return err
 		}
+		sc = o
+	case SQLTypeRenameTable:
+		var o RenameTableResult
+		if err = json.Unmarshal(bs, &o); err != nil {
+			logger.Error("json unmarshal line failed %s", err.Error())
+			return err
+		}
+		logger.Info("===== rename table result: %+v", o)
 		sc = o
 	case SQLTypeAlterTable:
 		var o AlterTableResult

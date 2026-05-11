@@ -8,8 +8,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+import logging
 import uuid
-from typing import List
+from typing import Any, Dict, List
 
 from backend.db_meta.enums import MachineType
 from backend.db_meta.models import Machine
@@ -17,6 +18,8 @@ from backend.db_monitor.models import MySQLDBHAAutofixTicketPriority, MySQLDBHAA
 from backend.db_services.dbbase.constants import IpSource, SourceType
 from backend.ticket.builders.common.constants import MySQLBackupSource
 from backend.ticket.constants import TicketType
+
+logger = logging.getLogger("celery.mysql_dbha_autofix")
 
 
 def replace_remote(cluster_ids: List[int], machine_type: MachineType, events: List[MySQLDBHAEvent]):
@@ -32,7 +35,7 @@ def replace_remote(cluster_ids: List[int], machine_type: MachineType, events: Li
     for ip in ips:
         machine_obj = Machine.objects.get(bk_cloud_id=bk_cloud_id, ip=ip)
         ip_events = [ev for ev in events if ev.ip == ip]
-        info = {
+        info: Dict[str, Any] = {
             "old_nodes": {"old_slave": []},
             "resource_spec": {"new_slave": {"count": 1, "spec_id": machine_obj.spec_id}},
             "cluster_id": cluster_id,
@@ -87,3 +90,9 @@ def replace_remote(cluster_ids: List[int], machine_type: MachineType, events: Li
         )
 
     MySQLDBHAAutofixTicketStageQueue.objects.bulk_create(queue_to_create)
+    logger.info(
+        "[tendbcluster.replace_remote] queued: queue_uuid=%s, cluster_ids=%s, ips=%s, priority=P2",
+        queue_uuid,
+        cluster_ids,
+        ips,
+    )

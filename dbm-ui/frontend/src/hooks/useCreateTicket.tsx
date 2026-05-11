@@ -1,14 +1,21 @@
+import { Message } from 'bkui-vue';
 import InfoBox from 'bkui-vue/lib/info-box';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 
 import { createTicketNew } from '@services/source/ticket';
 
-import { useEventBus, useTicketMessage } from '@hooks';
+import { useEventBus } from '@hooks';
 
 import { type TicketTypes } from '@common/const';
 
 import { messageError } from '@utils';
+
+interface IRowError {
+  errors: string;
+  field: string;
+  row_key: string;
+}
 
 export function useCreateTicket<T>(
   ticketType: TicketTypes,
@@ -19,10 +26,8 @@ export function useCreateTicket<T>(
 ) {
   const loading = ref(false);
   const router = useRouter();
-  const route = useRoute();
   const eventBus = useEventBus();
   const { locale, t } = useI18n();
-  const ticketMessage = useTicketMessage();
 
   const run = async (formData: { details: T; ignore_duplication?: boolean; remark?: string }) => {
     const params = {
@@ -38,53 +43,47 @@ export function useCreateTicket<T>(
 
       window.changeConfirm = false;
 
+      const route = router.resolve({
+        name: 'bizTicketManage',
+        params: {
+          ticketId,
+        },
+      });
+
+      Message({
+        delay: 6000,
+        dismissable: false,
+        message: h('div', { style: 'width: 100%; display: flex; justify-content: space-between;' }, [
+          h('span', {}, t('单据提交成功！您可以继续提交新单据')),
+          h(
+            'a',
+            {
+              href: route.href,
+              target: '_blank',
+            },
+            t('查看详情'),
+          ),
+        ]),
+        theme: 'success',
+      });
+
+      eventBus.emit('db-toolbox-success');
+
       if (options?.onSuccess) {
-        options.onSuccess(ticketId);
-        ticketMessage(ticketId);
-        return;
-      }
-
-      // 如果当前路由非工具箱路由
-      if (!route.meta.ticketType) {
-        ticketMessage(ticketId);
-        return;
-      }
-
-      const toolboxResultMap = {
-        MONGODB: 'MongodbToolboxResult',
-        MYSQL: 'MysqlToolboxResult',
-        ORACLE: 'OracleToolboxResult',
-        REDIS: 'RedisToolboxResult',
-        SQLSERVER: 'SqlserverToolboxResult',
-        TENDBCLUSTER: 'TendbclusterToolboxResult',
-      };
-      const targetTicketType = route.meta.ticketType as string;
-      const targetDb = targetTicketType.split('_')[0];
-      const resultRouteName = toolboxResultMap[targetDb as keyof typeof toolboxResultMap];
-      if (resultRouteName) {
-        router.push({
-          name: resultRouteName,
-          params: {
-            ticketId,
-            ticketType: targetTicketType,
-          },
-        });
-        if (options?.onSuccess) {
-          options.onSuccess(ticketId);
-        }
+        options?.onSuccess(ticketId);
       }
     } catch (error: unknown) {
       const {
         code,
         data,
-        error: errorMessage = [] as any[],
+        errors: errorList,
         message,
       } = error as {
         code: number;
         data: {
           duplicate_ticket_id: number;
         };
-        error: string[];
+        errors?: IRowError[] | string[];
         message: string;
       };
       const duplicateCode = 8704005;
@@ -144,11 +143,13 @@ export function useCreateTicket<T>(
             title: t('是否继续提交单据'),
           });
         });
-      } else if (errorMessage.length > 0) {
-        if (options?.onError) {
-          options.onError(errorMessage || []);
+      } else if (errorList && errorList.length > 0) {
+        if (typeof errorList[0] === 'string') {
+          eventBus.emit('db-toolbox-error', errorList.join('\n'));
+        } else if (options?.onError) {
+          options.onError(errorList as IRowError[]);
         } else {
-          eventBus.emit('db-toolbox-error', errorMessage.map((item) => item.errors).join(','));
+          eventBus.emit('db-toolbox-error', (errorList as IRowError[]).map((item) => item.errors).join(','));
         }
       } else {
         eventBus.emit('db-toolbox-error', message);

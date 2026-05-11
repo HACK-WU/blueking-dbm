@@ -22,6 +22,8 @@
  * SOFTWARE.
  */
 
+// Package discovery provides etcd-backed service discovery primitives, including
+// key watch/get helpers and lifecycle management for discovery clients.
 package discovery
 
 import (
@@ -66,7 +68,7 @@ type Discovery struct {
 }
 
 // Watch Subscribe to target key events and receive data from the watch channel.
-func (d *Discovery) Watch(ctx context.Context, key string) (chan *WatchEvent, error) {
+func (d *Discovery) Watch(ctx context.Context, key string) (<-chan *WatchEvent, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return nil, ErrEmptyWatchedKey
@@ -76,7 +78,7 @@ func (d *Discovery) Watch(ctx context.Context, key string) (chan *WatchEvent, er
 }
 
 // WatchWithPrefix Subscribe to prefix key events with prefix and receive data from the watch channel.
-func (d *Discovery) WatchWithPrefix(ctx context.Context, key string) (chan *WatchEvent, error) {
+func (d *Discovery) WatchWithPrefix(ctx context.Context, key string) (<-chan *WatchEvent, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return nil, ErrEmptyWatchedKey
@@ -142,7 +144,7 @@ func (d *Discovery) Close() {
 	}
 }
 
-func (d *Discovery) watchCommon(ctx context.Context, key string, opts ...clientv3.OpOption) (chan *WatchEvent, error) {
+func (d *Discovery) watchCommon(ctx context.Context, key string, opts ...clientv3.OpOption) (<-chan *WatchEvent, error) {
 	if d.quit == nil {
 		d.quit = make(chan struct{})
 	}
@@ -185,7 +187,7 @@ func (d *Discovery) watchCommon(ctx context.Context, key string, opts ...clientv
 					d.client.Close()
 					d.client = nil
 					d.cliMu.Unlock()
-					logger.Error("failed to read watch event, errmsg: %v", err)
+					logger.Error("failed to read watch event, errmsg: %s", err)
 					return
 				}
 

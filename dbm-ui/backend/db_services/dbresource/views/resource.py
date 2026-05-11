@@ -70,7 +70,7 @@ from backend.iam_app.dataclass.actions import ActionEnum
 from backend.iam_app.handlers.drf_perm.base import ResourceActionPermission
 from backend.iam_app.handlers.permission import Permission
 from backend.ticket.constants import BAMBOO_STATE__TICKET_STATE_MAP, TicketStatus, TicketType
-from backend.ticket.models import Ticket
+from backend.ticket.models import Ticket, Todo
 from backend.utils.redis import RedisConn
 
 
@@ -83,6 +83,8 @@ class DBResourceViewSet(viewsets.SystemViewSet):
             "resource_confirm",
             "resource_delete",
             "resource_update",
+            "resource_export",
+            "resource_osname",
             "append_labels",
         ): [ResourceActionPermission([ActionEnum.RESOURCE_POLL_MANAGE])],
         (
@@ -145,6 +147,20 @@ class DBResourceViewSet(viewsets.SystemViewSet):
             host.update(occupancy=(host["host_id"] in resource_host_ids))
 
         return Response(host_infos)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("资源池操作系统列表"),
+        tags=[SWAGGER_TAG],
+    )
+    @action(detail=False, methods=["POST"])
+    def resource_osname(self, request):
+        data = {}
+        os_names = DBResourceApi.resource_osname()
+        if os_names:
+            bk_os_names = [{"value": os_name, "text": os_name} for os_name in os_names]
+            data["os_names"] = bk_os_names
+
+        return Response(data=data)
 
     @common_swagger_auto_schema(
         operation_summary=_("查询DBA业务下的主机信息"),
@@ -340,7 +356,7 @@ class DBResourceViewSet(viewsets.SystemViewSet):
             MachineEvent.host_event_trigger(
                 env.DBA_APP_BK_BIZ_ID, data["hosts"], data["event"], operator, remark=data["remark"]
             )
-
+            Todo.host_todo_trigger(bk_host_ids, [operator], data["event"], None)
         # 删除资源
         resp = DBResourceApi.resource_delete(params={"bk_host_ids": bk_host_ids})
         return Response(resp)
@@ -527,3 +543,12 @@ class DBResourceViewSet(viewsets.SystemViewSet):
         params = self.params_validate(self.get_serializer_class())
         data = ResourceHandler.calc_resource_water_level(get_cache=params["cache"])
         return Response(data)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("资源池导出"),
+        tags=[SWAGGER_TAG],
+    )
+    @action(detail=False, methods=["POST"], serializer_class=ResourceListSerializer)
+    def resource_export(self, request):
+        params = self.params_validate(self.get_serializer_class())
+        return ResourceHandler.resource_export(params)

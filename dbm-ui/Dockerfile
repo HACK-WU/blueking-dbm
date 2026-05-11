@@ -1,4 +1,4 @@
-FROM node:22.16.0-slim AS frontend-installer
+FROM node:24.15.0-slim AS frontend-installer
 
 RUN yarn config set registry https://mirrors.tencent.com/npm/
 
@@ -6,7 +6,7 @@ WORKDIR /frontend
 COPY frontend/package.json ./
 RUN node -v && \
     yarn cache clean --all --force && \
-    rm -rf node_modules yarn.lock && \
+    rm -rf node_modules && \
     yarn install --force
 
 FROM frontend-installer AS frontend-builder
@@ -61,7 +61,11 @@ COPY ./pyproject.toml ./poetry.lock /
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 # 创建 Python 虚拟环境并安装依赖
-RUN set -ex && python -m venv /venv && . /venv/bin/activate && pip install --upgrade pip && pip install poetry && poetry install --no-root
+RUN set -ex && python -m venv /venv && . /venv/bin/activate && \
+    pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir poetry poetry-plugin-export && \
+    poetry export -f requirements.txt --without-hashes -o /requirements.txt && \
+    pip install --no-cache-dir -r /requirements.txt
 
 FROM base AS copy-backend-file
 WORKDIR /app

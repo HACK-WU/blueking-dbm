@@ -11,14 +11,29 @@ specific language governing permissions and limitations under the License.
 from django.utils.translation import gettext_lazy as _
 from rest_framework.response import Response
 
-from backend.dbm_aiagent.mcp_tools.constants import DBMAMcpTools, DBMMCPTags
+from backend.dbm_aiagent.mcp_tools.common.auth_parser.base import auth_parse_clusters
+from backend.dbm_aiagent.mcp_tools.constants import DBMMCPTags, DBMMcpTools
 from backend.dbm_aiagent.mcp_tools.decorators import mcp_tools_api_decorator
 from backend.dbm_aiagent.mcp_tools.exceptions import DBMMcpNoneBillSubmittedException, DBMMcpUsernameNotFoundException
+from backend.dbm_aiagent.mcp_tools.mysql.auth_parser.bill import auth_parse_mysql_tdbctl_upgrade_ticket
 from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_apply_priv import bill_apply_priv
 from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_db_table_backup import bill_db_table_backup
 from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_fullbackup import mysql_full_backup
+from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_machine_replace.bill_backend_slave_replace import (
+    bill_backend_slave_replace,
+)
+from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_machine_replace.bill_proxy_replace import bill_proxy_replace
+from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_machine_replace.bill_remote_replace import bill_remote_replace
+from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_machine_replace.bill_spider_replace import bill_spider_replace
+from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_machine_replace.bill_tendbcluster_master_slave_switch import (
+    bill_tendbcluster_master_slave_switch,
+)
+from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_machine_replace.bill_tendbha_master_slave_swtich import (
+    bill_tendbha_master_slave_switch,
+)
 from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_mysql_standardize import bill_mysql_standardize
 from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_rename_db import bill_rename_db
+from backend.dbm_aiagent.mcp_tools.mysql.impl.bill_tdbctl_upgrade import bill_tdbctl_upgrade
 from backend.dbm_aiagent.mcp_tools.mysql.serializers.bill_output import SubmitBillOutputSerializer
 from backend.dbm_aiagent.mcp_tools.mysql.serializers.mysql_apply_priv_bill import (
     SubmitBillMySQLApplyPrivInputSerializer,
@@ -30,11 +45,17 @@ from backend.dbm_aiagent.mcp_tools.mysql.serializers.mysql_db_table_backup impor
 from backend.dbm_aiagent.mcp_tools.mysql.serializers.mysql_full_backup_bill import (
     SubmitBillMySQLFullBackupInputSerializer,
 )
+from backend.dbm_aiagent.mcp_tools.mysql.serializers.mysql_machine_replace import (
+    SubmitBillMySQLMachineReplaceSerializer,
+    SubmitBillTenDBClusterMachineReplaceSerializer,
+)
 from backend.dbm_aiagent.mcp_tools.mysql.serializers.mysql_standardize_bill import (
     SubmitBillMySQLStandardizeInputSerializer,
 )
+from backend.dbm_aiagent.mcp_tools.mysql.serializers.tdbctl_upgrade_bill import SubmitBillTdbctlUpgradeInputSerializer
 from backend.dbm_aiagent.mcp_tools.views import McpToolsViewSet
 from backend.iam_app.handlers.drf_perm.base import DBManagePermission
+from backend.iam_app.handlers.drf_perm.mcp import McpTicketToolPermission
 
 
 class MySQLBillMcpToolsViewSet(McpToolsViewSet):
@@ -44,8 +65,10 @@ class MySQLBillMcpToolsViewSet(McpToolsViewSet):
         description=str(_("""创建 TenDBHA, TenDBCluster 全备单据""")),
         request_slz=SubmitBillMySQLFullBackupInputSerializer,
         response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_clusters,
         tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
-        mcp=[DBMAMcpTools.MYSQL_BILL],
+        mcp=[DBMMcpTools.MYSQL_BILL],
         name_prefix="mysql_bill",
     )
     def submit_bill_mysql_full_backup(self, request, *args, **kwargs):
@@ -67,8 +90,10 @@ class MySQLBillMcpToolsViewSet(McpToolsViewSet):
         description=str(_("""创建 TenDBHA, TenDBCluster 库表备单据""")),
         request_slz=SubmitBillMySQLDBTableBackupInputSerializer,
         response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_clusters,
         tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
-        mcp=[DBMAMcpTools.MYSQL_BILL],
+        mcp=[DBMMcpTools.MYSQL_BILL],
         name_prefix="mysql_bill",
     )
     def submit_bill_mysql_db_table_backup(self, request, *args, **kwargs):
@@ -106,8 +131,10 @@ class MySQLBillMcpToolsViewSet(McpToolsViewSet):
         ),
         request_slz=SubmitBillMySQLApplyPrivInputSerializer,
         response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_clusters,
         tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
-        mcp=[DBMAMcpTools.MYSQL_BILL],
+        mcp=[DBMMcpTools.MYSQL_BILL],
         name_prefix="mysql_bill",
     )
     def submit_bill_mysql_apply_priv(self, request, *args, **kwargs):
@@ -137,8 +164,10 @@ class MySQLBillMcpToolsViewSet(McpToolsViewSet):
         description=str(_("""创建 mysql 标准化单据""")),
         request_slz=SubmitBillMySQLStandardizeInputSerializer,
         response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_clusters,
         tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
-        mcp=[DBMAMcpTools.MYSQL_BILL],
+        mcp=[DBMMcpTools.MYSQL_BILL],
         name_prefix="mysql_bill",
     )
     def submit_bill_mysql_standardize(self, request, *args, **kwargs):
@@ -173,8 +202,10 @@ class MySQLBillMcpToolsViewSet(McpToolsViewSet):
         description=str(_("""创建 DB 重命名单据""")),
         request_slz=SubmitBillMySQLDBRenameInputSerializer,
         response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_clusters,
         tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
-        mcp=[DBMAMcpTools.MYSQL_BILL],
+        mcp=[DBMMcpTools.MYSQL_BILL],
         name_prefix="mysql_bill",
     )
     def submit_bill_mysql_db_rename(self, request, *args, **kwargs):
@@ -196,3 +227,148 @@ class MySQLBillMcpToolsViewSet(McpToolsViewSet):
                 target_dbname=target_dbname,
             )
         )
+
+    @mcp_tools_api_decorator(
+        description=str(
+            _(
+                """创建 TenDBCluster 中控（tdbctl）升级单据
+
+参数说明：
+- bk_biz_id: 业务ID（必填）
+- cluster_domains: 集群域名列表（可选，与 cluster_ids 二选一）
+- cluster_ids: 集群ID列表（可选，与 cluster_domains 二选一）
+- version: 升级版本号（可选，如 2.4.13，不传则使用最新创建的 tdbctl 包）
+
+使用场景：
+1. 只传 bk_biz_id: 升级该业务下所有 TenDBCluster 集群
+2. 传 bk_biz_id + cluster_domains/cluster_ids: 升级指定集群（支持多个）
+        """
+            )
+        ),
+        request_slz=SubmitBillTdbctlUpgradeInputSerializer,
+        response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_mysql_tdbctl_upgrade_ticket,
+        tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
+        mcp=[DBMMcpTools.MYSQL_BILL],
+        name_prefix="mysql_bill",
+    )
+    def submit_bill_tdbctl_upgrade(self, request, *args, **kwargs):
+        bk_biz_id = self.get_param("bk_biz_id")
+        cluster_domains = self.get_param("cluster_domains", None)
+        cluster_ids = self.get_param("cluster_ids", None)
+        version = self.get_param("version", None)
+
+        username = request.user.username
+        if not username:
+            raise DBMMcpUsernameNotFoundException()
+
+        return Response(
+            bill_tdbctl_upgrade(
+                bk_biz_id=bk_biz_id,
+                username=username,
+                cluster_domains=cluster_domains,
+                cluster_ids=cluster_ids,
+                version=version,
+            )
+        )
+
+    @mcp_tools_api_decorator(
+        description=str(_("""创建 TenDBHA proxy 新机替换单据""")),
+        request_slz=SubmitBillMySQLMachineReplaceSerializer,
+        response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_clusters,
+        tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
+        mcp=[DBMMcpTools.MYSQL_BILL],
+        name_prefix="mysql_bill",
+    )
+    def submit_bill_proxy_replace(self, request, *args, **kwargs):
+        cluster_domains = list({d.strip() for d in self.get_param("cluster_domains")})
+        ips = list({addr.strip() for addr in self.get_param("ips")})
+
+        return Response(bill_proxy_replace(cluster_domains=cluster_domains, ips=ips))
+
+    @mcp_tools_api_decorator(
+        description=str(_("""创建 TenDBHA 存储 slave 新机替换单据""")),
+        request_slz=SubmitBillMySQLMachineReplaceSerializer,
+        response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_clusters,
+        tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
+        mcp=[DBMMcpTools.MYSQL_BILL],
+        name_prefix="mysql_bill",
+    )
+    def submit_bill_backend_slave_replace(self, request, *args, **kwargs):
+        cluster_domains = list({d.strip() for d in self.get_param("cluster_domains")})
+        ips = list({addr.strip() for addr in self.get_param("ips")})
+
+        return Response(bill_backend_slave_replace(cluster_domains=cluster_domains, ips=ips))
+
+    @mcp_tools_api_decorator(
+        description=str(_("""创建 TenDBCluster spider 新机替换单据""")),
+        request_slz=SubmitBillTenDBClusterMachineReplaceSerializer,
+        response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_clusters,
+        tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
+        mcp=[DBMMcpTools.MYSQL_BILL],
+        name_prefix="mysql_bill",
+    )
+    def submit_bill_spider_replace(self, request, *args, **kwargs):
+        cluster_domain = self.get_param("cluster_domain")
+        ips = list({addr.strip() for addr in self.get_param("ips")})
+
+        return Response(bill_spider_replace(cluster_domain=cluster_domain, ips=ips))
+
+    @mcp_tools_api_decorator(
+        description=str(_("""创建 TenDBCluster remote slave 新机替换单据""")),
+        request_slz=SubmitBillTenDBClusterMachineReplaceSerializer,
+        response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_clusters,
+        tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
+        mcp=[DBMMcpTools.MYSQL_BILL],
+        name_prefix="mysql_bill",
+    )
+    def submit_bill_remote_slave_replace(self, request, *args, **kwargs):
+        cluster_domain = self.get_param("cluster_domain")
+        ips = list({addr.strip() for addr in self.get_param("ips")})
+
+        return Response(bill_remote_replace(cluster_domain=cluster_domain, ips=ips))
+
+    @mcp_tools_api_decorator(
+        description=str(_("""创建 TenDBHA 主从互切单据""")),
+        request_slz=SubmitBillMySQLMachineReplaceSerializer,
+        response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_clusters,
+        tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
+        mcp=[DBMMcpTools.MYSQL_BILL],
+        name_prefix="mysql_bill",
+    )
+    def submit_bill_tendbha_master_slave_switch(self, request, *args, **kwargs):
+        """
+        因为懒得定义个新的 serializer, 这里的输入 ip 才是 list
+        实际上只应该有一个
+        """
+        cluster_domains = list({d.strip() for d in self.get_param("cluster_domains")})
+        ips = list({addr.strip() for addr in self.get_param("ips")})
+
+        return Response(bill_tendbha_master_slave_switch(cluster_domains=cluster_domains, ips=ips))
+
+    @mcp_tools_api_decorator(
+        description=str(_("""创建 TenDBCluster 主从互切单据""")),
+        request_slz=SubmitBillTenDBClusterMachineReplaceSerializer,
+        response_slz=SubmitBillOutputSerializer,
+        permission_classes=[McpTicketToolPermission],
+        mcp_auth_parser=auth_parse_clusters,
+        tags=[DBMMCPTags.READ, DBMMCPTags.WRITE],
+        mcp=[DBMMcpTools.MYSQL_BILL],
+        name_prefix="mysql_bill",
+    )
+    def submit_bill_tendbcluster_master_slave_switch(self, request, *args, **kwargs):
+        cluster_domain = self.get_param("cluster_domain")
+        ips = list({addr.strip() for addr in self.get_param("ips")})
+
+        return Response(bill_tendbcluster_master_slave_switch(cluster_domain, ips))

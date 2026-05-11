@@ -131,6 +131,14 @@ class _DBResourceApi(BaseApi):
             url="resource/param/query",
             description=_("根据单据ID/任务ID查询资源请求参数"),
         )
+        self.resource_osname = self.generate_data_api(
+            method="POST", url="resource/list/osname", description=_("获取所有的操作系统名称")
+        )
+        self.resource_lack_analysis = self.generate_data_api(
+            method="POST",
+            url="resource/analysis/result",
+            description=_("资源申请不足分析"),
+        )
 
 
 DBResourceApi = _DBResourceApi()

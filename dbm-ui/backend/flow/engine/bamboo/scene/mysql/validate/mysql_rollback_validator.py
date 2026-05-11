@@ -12,8 +12,10 @@ import re
 
 from django.utils.translation import gettext as _
 
+from backend.db_meta.models import Cluster
 from backend.flow.consts import MySQLBackupTypeEnum, RollbackType
 from backend.flow.engine.validate.mysql_base_validate import MysqlBaseValidator
+from backend.flow.utils.mysql.db_table_filter.tools import replace_glob
 
 logger = logging.getLogger("root")
 
@@ -59,7 +61,9 @@ class TenDbHaRollbackFlowValidator(MysqlBaseValidator):
             else:
                 # 1. 匹对指定的回档DB在备份中是否存在
                 backup_pattern_dbs = []
-                for db_pattern in rollback_databases:
+                # 替换数据库的模糊匹配为正则匹配.
+                rollback_databases_parts = ["{}$".format(replace_glob(db)) for db in rollback_databases]
+                for db_pattern in rollback_databases_parts:
                     db_patterns = [db for db in backup_database_list if re.match(db_pattern, db)]
                     backup_pattern_dbs.extend(db_patterns)
                 if len(backup_pattern_dbs) == 0:
@@ -73,7 +77,10 @@ class TenDbHaRollbackFlowValidator(MysqlBaseValidator):
                     error_msgs.append(msg_format(index, _("指定时间回档只能是全服回档，不能指定DB")))
 
             # 3. 如果是指定备份记录的回档，不能有影响的DB
-            if rollback_type in [RollbackType.REMOTE_AND_BACKUPID, RollbackType.LOCAL_AND_BACKUPID]:
+            if (
+                rollback_type in [RollbackType.REMOTE_AND_BACKUPID, RollbackType.LOCAL_AND_BACKUPID]
+                and backup_type != MySQLBackupTypeEnum.PHYSICAL.value
+            ):
                 if len(affect_database_list) > 0:
                     error_msgs.append(msg_format(index, _("指定备份记录的回档不能有 受影响的DB,请先清理或者提单rename目标集群的影响DB")))
             if (
@@ -95,8 +102,16 @@ class TenDbClusterRollbackFlowValidator(MysqlBaseValidator):
     def __call__(self):
         error_msgs = []
         for index, info in enumerate(self.data["infos"]):
-            # source_cluster_id = info["cluster_id"]
-            # target_cluster_id = info["target_cluster_id"]
+            if self.data["rollback_cluster_type"] != "BUILD_INTO_NEW_CLUSTER":
+                source_cluster_id = info["cluster_id"]
+                target_cluster_id = info["target_cluster_id"]
+                source_obj = Cluster.objects.get(id=source_cluster_id)
+                target_obj = Cluster.objects.get(id=target_cluster_id)
+                shards = source_obj.tendbclusterstorageset_set.filter()
+                new_shards = target_obj.tendbclusterstorageset_set.filter()
+                if len(shards) != len(new_shards):
+                    error_msgs.append(msg_format(index, _("源集群和目标集群的分片数不一致")))
+
             # rollback_time = info["rollback_time"]
             rollback_type = info["rollback_type"]
             rollback_databases = info["databases"]
@@ -122,7 +137,8 @@ class TenDbClusterRollbackFlowValidator(MysqlBaseValidator):
             else:
                 # 1. 匹对指定的回档DB在备份中是否存在
                 backup_pattern_dbs = []
-                for db_pattern in rollback_databases:
+                rollback_databases_parts = ["{}$".format(replace_glob(db)) for db in rollback_databases]
+                for db_pattern in rollback_databases_parts:
                     db_patterns = [db for db in backup_database_list if re.match(db_pattern, db)]
                     backup_pattern_dbs.extend(db_patterns)
                 if len(backup_pattern_dbs) == 0:
@@ -135,7 +151,10 @@ class TenDbClusterRollbackFlowValidator(MysqlBaseValidator):
                     error_msgs.append(msg_format(index, _("指定时间回档只能是全服回档，不能指定DB")))
 
             # 3. 如果是指定备份记录的回档，不能有影响的DB
-            if rollback_type in [RollbackType.REMOTE_AND_BACKUPID, RollbackType.LOCAL_AND_BACKUPID]:
+            if (
+                rollback_type in [RollbackType.REMOTE_AND_BACKUPID, RollbackType.LOCAL_AND_BACKUPID]
+                and MySQLBackupTypeEnum.PHYSICAL.value not in backup_type_list
+            ):
                 if len(affect_database_list) > 0:
                     error_msgs.append(msg_format(index, _("指定备份记录的回档不能有 受影响的DB,请先清理或者提单rename目标集群的影响DB")))
             if (
@@ -150,4 +169,5 @@ class TenDbClusterRollbackFlowValidator(MysqlBaseValidator):
 
 
 def msg_format(index: int = 0, msg="") -> str:
+    index = index + 1
     return _("第{}行:{}").format(index, msg)

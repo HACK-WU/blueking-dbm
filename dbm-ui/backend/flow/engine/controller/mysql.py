@@ -68,6 +68,8 @@ from backend.flow.engine.bamboo.scene.mysql.mysql_single_enable_flow import MySQ
 from backend.flow.engine.bamboo.scene.mysql.mysql_truncate_flow import MySQLTruncateFlow
 from backend.flow.engine.bamboo.scene.mysql.mysql_upgrade import MySQLStorageLocalUpgradeFlow
 from backend.flow.engine.bamboo.scene.mysql.pt_table_sync import PtTableSyncFlow
+from backend.flow.engine.bamboo.scene.mysql.revoke.mysql_ha_apply_revoke_flow import MySQLHAApplyRevokeFlow
+from backend.flow.engine.bamboo.scene.mysql.revoke.mysql_single_apply_revoke_flow import MySQLSingleApplyRevokeFlow
 from backend.flow.engine.bamboo.scene.mysql.validate.mysql_local_upgrade_validator import MySQLLocalUpgradeValidator
 from backend.flow.engine.bamboo.scene.mysql.validate.mysql_proxy_add_validator import MySQLProxyClusterAddFlowValidator
 from backend.flow.engine.bamboo.scene.mysql.validate.mysql_proxy_reduce_validator import (
@@ -90,6 +92,7 @@ from backend.flow.engine.bamboo.scene.mysql.validate.tendbsingle_migrate_validat
     TendbSingleMigrateFlowValidator,
 )
 from backend.flow.engine.controller.base import BaseController
+from backend.flow.engine.revoke.base import revoke_with
 from backend.flow.engine.validate.base_validate import validates_with
 
 
@@ -98,6 +101,7 @@ class MySQLController(BaseController):
     mysql实例相关调用
     """
 
+    @revoke_with(MySQLSingleApplyRevokeFlow)
     def mysql_single_apply_scene(self):
         """
         部署tenDB(mysql)单实例场景(新flow编排)
@@ -128,6 +132,7 @@ class MySQLController(BaseController):
         flow = MySQLRestoreSlaveRemoteFlow(root_id=self.root_id, tick_data=self.ticket_data)
         flow.restore_local_slave_flow()
 
+    @revoke_with(MySQLHAApplyRevokeFlow)
     def mysql_ha_apply_scene(self):
         """
         部署tenDB(mysql) HA集群场景(新flow编排)

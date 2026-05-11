@@ -181,6 +181,10 @@ class EsReplaceFlow(EsFlow):
                 scale_up_act_kwargs.exec_ip = ip
                 scale_up_act_kwargs.es_role = role
                 scale_up_act_kwargs.instance_num = instance_num
+                # 写入亲合度相关信息，目前为园区、机房、机架三个维度
+                scale_up_act_kwargs.sub_zone_id = node.get("sub_zone_id") or ""
+                scale_up_act_kwargs.idc_id = node.get("idc_id") or ""
+                scale_up_act_kwargs.rack_id = node.get("rack_id") or ""
                 sub_pipeline.add_act(
                     act_name=_("安装ES {}-{}节点").format(role, ip),
                     act_component_code=ExecuteEsActuatorScriptComponent.code,
@@ -388,4 +392,4 @@ class EsReplaceFlow(EsFlow):
 
         es_pipeline.add_sub_pipeline(sub_flow=shrink_sub_pipeline.build_sub_process(sub_name=_("缩容子流程")))
 
-        es_pipeline.run_pipeline()
+        es_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=[self.cluster_id])

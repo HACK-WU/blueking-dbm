@@ -149,6 +149,7 @@ class RedisDataStructureContext:
     redis_act_payload: Optional[Any] = None  # 代表获取payload参数的类
     disk_used: dict = field(default_factory=dict)
     backup_dir: str = None
+    alarm_shield_id: int = None  # 告警屏蔽ID
 
     def cal_twemproxy_serveres(self, name) -> list:
         """
@@ -193,10 +194,6 @@ class RedisRollbackExerciseContext:
     """
 
     alarm_shield_id: int = None  # 告警屏蔽ID
-    rollback_flow_obj_id: str = None  # 回滚 Flow ID
-    delete_flow_obj_id: str = None  # 销毁 Flow ID
-    report_id: int = None  # 演练记录ID
-    polling_start_time: float = None  # 轮询开始时间
     task_msg: list = field(default_factory=list)  # 执行情况
     error_occurred: bool = False  # 发生异常
 

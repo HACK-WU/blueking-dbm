@@ -45,6 +45,19 @@ var Kcs KubeClientSets
 // DefaultUser default user
 const DefaultUser = "root"
 
+// FatalError 致命错误，表示不应该继续重试的错误
+type FatalError struct {
+	ContainerName string
+	Reason        string
+	CheckCount    int
+	Message       string
+}
+
+func (e *FatalError) Error() string {
+	return fmt.Sprintf("container %s is in %s state, pod creation failed after %d checks: %s",
+		e.ContainerName, e.Reason, e.CheckCount, e.Message)
+}
+
 // KubeClientSets k8s client sets
 type KubeClientSets struct {
 	Cli        *kubernetes.Clientset
@@ -55,6 +68,7 @@ type KubeClientSets struct {
 // MySQLPodBaseInfo mysql pod base info
 type MySQLPodBaseInfo struct {
 	PodName string
+	Engine  string
 	Labels  map[string]string
 	Args    []string
 	RootPwd string
@@ -135,11 +149,8 @@ func (k *DbPodSets) getClusterPodContainerSpec() []v1.Container {
 
 	containers := []v1.Container{
 		{
-			Name: "backend",
-			Env: []v1.EnvVar{{
-				Name:  "MYSQL_ROOT_PASSWORD",
-				Value: k.BaseInfo.RootPwd,
-			}},
+			Name:            "backend",
+			Env:             k.getBackendEnv(),
 			Resources:       k.getResourceLimit(),
 			ImagePullPolicy: v1.PullIfNotPresent,
 			Image:           k.DbImage,
@@ -230,7 +241,7 @@ func (k *DbPodSets) getClusterPodContainerSpec() []v1.Container {
 }
 
 // CreateClusterPod create tendbcluster simulation pod
-func (k *DbPodSets) CreateClusterPod(mySQLVersion string) (err error) {
+func (k *DbPodSets) CreateClusterPod(mySQLVersion string, xlogger *logger.Logger) (err error) {
 	// 创建 ConfigMap 存储 my.cnf 配置
 	if err = k.createClusterConfigMap(mySQLVersion); err != nil {
 		return err
@@ -269,7 +280,7 @@ func (k *DbPodSets) CreateClusterPod(mySQLVersion string) (err error) {
 			Containers: k.getClusterPodContainerSpec(),
 		},
 	}
-	if err = k.createpod(c, 26000); err != nil {
+	if err = k.createPod(c, 26000, xlogger); err != nil {
 		logger.Error("create spider cluster failed %s", err.Error())
 		if deleteErr := k.deleteClusterConfigMap(); deleteErr != nil {
 			logger.Error("delete cluster configMap failed %s", deleteErr.Error())
@@ -286,8 +297,11 @@ func (k *DbPodSets) CreateClusterPod(mySQLVersion string) (err error) {
 	return nil
 }
 
-// createpod create pod
-func (k *DbPodSets) createpod(pod *v1.Pod, probePort int) (err error) {
+// CreatePod create pod
+func (k *DbPodSets) createPod(pod *v1.Pod, probePort int, xlogger *logger.Logger) (err error) {
+	if xlogger == nil {
+		xlogger = logger.New(os.Stdout, true, logger.InfoLevel, map[string]string{"pod_name": k.BaseInfo.PodName})
+	}
 	podc, err := k.K8S.Cli.CoreV1().Pods(k.K8S.Namespace).Create(context.TODO(), pod, metav1.CreateOptions{})
 	if err != nil {
 		logger.Error("create pod failed %s", err.Error())
@@ -300,6 +314,13 @@ func (k *DbPodSets) createpod(pod *v1.Pod, probePort int) (err error) {
 		CreatePodTime: time.Now(),
 		CreateTime:    time.Now()})
 	podIp := podc.Status.PodIP
+	// 用于跟踪每个容器的 CrashLoopBackOff 连续出现次数（按容器名称分别跟踪）
+	crashLoopCounts := make(map[string]int)
+	const maxCrashLoopChecks = 3 // 连续 3 次检测到 CrashLoopBackOff 就退出
+	// 自定义重试循环，支持提前退出
+	maxRetries := 120
+	retryDelay := 2 * time.Second
+	var lastErr error
 	// 连续多次探测pod的状态
 	fn := func() (err error) {
 		var podI *v1.Pod
@@ -311,8 +332,73 @@ func (k *DbPodSets) createpod(pod *v1.Pod, probePort int) (err error) {
 			return fmt.Errorf("get pod status is empty,wait some seconds")
 		}
 		for _, cStatus := range podI.Status.ContainerStatuses {
-			logger.Info("%s: %v", cStatus.Name, cStatus.Ready)
+			logger.Info("%s: %v, RestartCount: %d", cStatus.Name, cStatus.Ready, cStatus.RestartCount)
+
+			// 检测容器不 Ready 的情况
 			if !cStatus.Ready {
+				// 检查容器是否处于 crash 状态 - 先检查这个，因为需要尽早退出
+				if cStatus.State.Waiting != nil {
+					reason := cStatus.State.Waiting.Reason
+					if reason == "CrashLoopBackOff" || reason == "Error" {
+						// 增加该容器的 crash 计数
+						crashLoopCounts[cStatus.Name]++
+						currentCount := crashLoopCounts[cStatus.Name]
+
+						xlogger.Error("container %s is in %s state: %s (detected %d times)",
+							cStatus.Name, reason, cStatus.State.Waiting.Message, currentCount)
+
+						// 输出 Pod 中所有容器的镜像信息
+						containersInfo := k.getPodContainersInfo(podI)
+						xlogger.Error("%s", containersInfo)
+
+						// 抓取日志（使用 xlogger 输出到前端）
+						logs, logErr := k.getContainerLogs(k.BaseInfo.PodName, cStatus.Name, 100)
+						if logErr != nil {
+							xlogger.Error("failed to get crash logs: %s", logErr.Error())
+						} else {
+							xlogger.Error("========== Container %s Crash Logs ==========", cStatus.Name)
+							xlogger.Error("%s", logs)
+							xlogger.Error("========== End of Crash Logs ==========")
+						}
+
+						// 连续多次检测到 CrashLoopBackOff，停止重试
+						if currentCount >= maxCrashLoopChecks {
+							xlogger.Error("container %s has been in %s state for %d consecutive checks, stopping retry...",
+								cStatus.Name, reason, currentCount)
+							// 返回致命错误，外层会检测并立即退出重试循环
+							return &FatalError{
+								ContainerName: cStatus.Name,
+								Reason:        reason,
+								CheckCount:    currentCount,
+								Message:       cStatus.State.Waiting.Message,
+							}
+						}
+					} else {
+						// 如果容器状态不是 CrashLoopBackOff，重置该容器的计数器
+						crashLoopCounts[cStatus.Name] = 0
+					}
+				}
+
+				// 检测容器 crash 状态 - 重启次数检查
+				if cStatus.RestartCount > 2 {
+					// 容器反复重启，抓取日志（使用 xlogger 输出到前端）
+					xlogger.Warn("container %s has restarted %d times (not ready), fetching logs...",
+						cStatus.Name, cStatus.RestartCount)
+
+					// 输出 Pod 中所有容器的镜像信息
+					containersInfo := k.getPodContainersInfo(podI)
+					xlogger.Error("%s", containersInfo)
+
+					logs, logErr := k.getContainerLogs(k.BaseInfo.PodName, cStatus.Name, 200)
+					if logErr != nil {
+						xlogger.Error("failed to get logs for container %s: %s", cStatus.Name, logErr.Error())
+					} else {
+						xlogger.Error("========== Container %s Crash Logs (last 200 lines) ==========", cStatus.Name)
+						xlogger.Error("%s", logs)
+						xlogger.Error("========== End of Container %s Logs ==========", cStatus.Name)
+					}
+				}
+
 				return fmt.Errorf("container %s is not ready", cStatus.Name)
 			}
 			for _, podCondition := range podI.Status.Conditions {
@@ -325,8 +411,32 @@ func (k *DbPodSets) createpod(pod *v1.Pod, probePort int) (err error) {
 		logger.Info("the pod is ready,ip is %s", podIp)
 		return nil
 	}
-	if err = cmutil.Retry(cmutil.RetryConfig{Times: 120, DelayTime: 2 * time.Second}, fn); err != nil {
-		return err
+
+	// 自定义重试循环，支持检测到致命错误时立即退出
+	for i := 0; i < maxRetries; i++ {
+		lastErr = fn()
+		if lastErr == nil {
+			// 成功，退出循环
+			break
+		}
+
+		// 检查是否为致命错误（CrashLoopBackOff）
+		var fatalErr *FatalError
+		if errors.As(lastErr, &fatalErr) {
+			xlogger.Error("detected fatal error, stopping retry immediately: %s", fatalErr.Error())
+			return fatalErr
+		}
+
+		// 普通错误，继续重试
+		logger.Warn("第%d次重试,函数错误:%s", i, lastErr.Error())
+		if i < maxRetries-1 {
+			time.Sleep(retryDelay)
+		}
+	}
+
+	// 如果最终还是失败，返回错误
+	if lastErr != nil {
+		return errors.Wrap(lastErr, "retries exceeded")
 	}
 	logger.Info("the podIp is %s", podIp)
 	fnc := func() error {
@@ -343,15 +453,79 @@ func (k *DbPodSets) createpod(pod *v1.Pod, probePort int) (err error) {
 	if err = cmutil.Retry(cmutil.RetryConfig{Times: 60, DelayTime: 1 * time.Second}, fnc); err == nil {
 		model.UpdateTbContainerRecord(k.BaseInfo.PodName)
 	}
-	_, errx := k.DbWork.Db.Exec("create user ADMIN@localhost;")
-	if errx != nil {
-		logger.Error("create user ADMIN@localhost failed %s", errx.Error())
-	}
-	_, errx = k.DbWork.Db.Exec("grant all on *.* to ADMIN@localhost;")
-	if errx != nil {
-		logger.Error("grants user failed %s", errx.Error())
-	}
+	k.doAfterPodCreate()
 	return err
+}
+
+func (k *DbPodSets) doAfterPodCreate() {
+	// Fix: Do not warn if user already exists or grant fails due to already existing privilege
+	_, userErr := k.DbWork.Db.Exec("create user if not exists ADMIN@localhost;")
+	if userErr != nil {
+		logger.Warn("create user ADMIN@localhost failed: %s", userErr.Error())
+	}
+	_, grantErr := k.DbWork.Db.Exec("grant all privileges on *.* to ADMIN@localhost;")
+	if grantErr != nil {
+		logger.Warn("grant privileges to user ADMIN@localhost failed: %s", grantErr.Error())
+	}
+	return
+}
+
+// getContainerLogs 使用 k8s 原生接口获取容器日志
+func (k *DbPodSets) getContainerLogs(podName, containerName string, tailLines int64) (string, error) {
+	podLogOpts := v1.PodLogOptions{
+		Container: containerName,
+		TailLines: &tailLines, // 获取最后 N 行日志
+	}
+
+	req := k.K8S.Cli.CoreV1().Pods(k.K8S.Namespace).GetLogs(podName, &podLogOpts)
+	podLogs, err := req.Stream(context.TODO())
+	if err != nil {
+		return "", err
+	}
+	defer podLogs.Close()
+
+	buf := new(bytes.Buffer)
+	_, err = io.Copy(buf, podLogs)
+	if err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
+}
+
+// getPodContainersInfo 获取 Pod 中所有容器的镜像信息
+func (k *DbPodSets) getPodContainersInfo(podI *v1.Pod) string {
+	var info []string
+	info = append(info, "Pod Containers Information:")
+
+	for _, container := range podI.Spec.Containers {
+		// 查找对应的状态信息
+		var status string
+		var restartCount int32
+		for _, cStatus := range podI.Status.ContainerStatuses {
+			if cStatus.Name == container.Name {
+				switch {
+				case cStatus.Ready:
+					status = "Ready"
+				case cStatus.State.Waiting != nil:
+					status = fmt.Sprintf("Waiting (%s)", cStatus.State.Waiting.Reason)
+				case cStatus.State.Terminated != nil:
+					status = fmt.Sprintf("Terminated (%s)", cStatus.State.Terminated.Reason)
+				default:
+					status = "Not Ready"
+				}
+				restartCount = cStatus.RestartCount
+				break
+			}
+		}
+
+		info = append(info, fmt.Sprintf("  - Container: %s", container.Name))
+		info = append(info, fmt.Sprintf("    Image: %s", container.Image))
+		info = append(info, fmt.Sprintf("    Status: %s", status))
+		info = append(info, fmt.Sprintf("    Restart Count: %d", restartCount))
+	}
+
+	return strings.Join(info, "\n")
 }
 
 // getToleration special  node
@@ -359,7 +533,8 @@ func (k *DbPodSets) getToleration() []v1.Toleration {
 	ts := []v1.Toleration{}
 	for _, item := range config.GAppConfig.SimulationNodeLables {
 		ts = append(ts, v1.Toleration{
-			Key:      item.Key,
+			Key: item.Key,
+
 			Operator: v1.TolerationOpExists,
 		})
 	}
@@ -682,8 +857,22 @@ func (k *DbPodSets) deleteClusterConfigMap() error {
 	return nil
 }
 
+func (k *DbPodSets) getBackendEnv() []v1.EnvVar {
+	envs := []v1.EnvVar{{
+		Name:  "MYSQL_ROOT_PASSWORD",
+		Value: k.BaseInfo.RootPwd,
+	}}
+	if strings.ToLower(k.BaseInfo.Engine) == app.TokudbEngine {
+		envs = append(envs, v1.EnvVar{
+			Name:  "INIT_TOKUDB",
+			Value: "1",
+		})
+	}
+	return envs
+}
+
 // CreateMySQLPod create mysql pod
-func (k *DbPodSets) CreateMySQLPod(mysqlVersion string) (err error) {
+func (k *DbPodSets) CreateMySQLPod(mysqlVersion string, xlogger *logger.Logger) (err error) {
 	// 创建 ConfigMap 存储 my.cnf 配置
 	if err = k.createMySQLConfigMap(mysqlVersion); err != nil {
 		return err
@@ -728,10 +917,7 @@ func (k *DbPodSets) CreateMySQLPod(mysqlVersion string) (err error) {
 			Containers: []v1.Container{{
 				Resources: k.getResourceLimit(),
 				Name:      app.MySQL,
-				Env: []v1.EnvVar{{
-					Name:  "MYSQL_ROOT_PASSWORD",
-					Value: k.BaseInfo.RootPwd,
-				}},
+				Env:       k.getBackendEnv(),
 				Ports: []v1.ContainerPort{
 					{ContainerPort: 3306},
 				},
@@ -758,7 +944,7 @@ func (k *DbPodSets) CreateMySQLPod(mysqlVersion string) (err error) {
 		},
 	}
 
-	return k.createpod(c, 3306)
+	return k.createPod(c, 3306, xlogger)
 }
 
 // DeletePod delete pod and associated ConfigMap
@@ -783,21 +969,23 @@ func (k *DbPodSets) getLoadSchemaSQLCmd(bkpath, file string) (cmd string) {
 	// 从中控dump的schema文件,默认是添加了tc_admin=0,需要删除
 	// 因为模拟执行是需要将中控进行sql转发
 	commands = append(commands, fmt.Sprintf("sed -i '/50720 SET tc_admin=0/d' %s", file))
-	// del definer
-	commands = append(commands, fmt.Sprintf("sed -i 's/\\sDEFINER=`[^`]*`@`[^`]*`//g'  %s", file))
+	// del definer: 兼容 DEFINER=`user`@`host`（如 CREATE DEFINER=`ADMIN`@`localhost`）与 DEFINER='user'@'host' 两种格式
+	commands = append(commands, fmt.Sprintf("sed -i 's/[[:space:]]DEFINER=`[^`]*`@`[^`]*`//g' %s", file))
+	commands = append(commands, fmt.Sprintf("sed -i \"s/[[:space:]]DEFINER='[^']*'@'[^']*'//g\" %s", file))
 	commands = append(commands, fmt.Sprintf("mysql -uroot -p%s --default-character-set=%s -vvv < %s", k.BaseInfo.RootPwd,
 		k.BaseInfo.Charset, file))
 	return strings.Join(commands, " && ")
 }
 
-// getLoadSQLCmd get load sql cmd
-func (k *DbPodSets) getLoadSQLCmd(bkpath, file string, dbs []string) (cmd []string) {
-	cmd = append(cmd, k.getDownloadSqlCmd(bkpath, file))
-	for _, db := range dbs {
-		cmd = append(cmd, fmt.Sprintf("mysql --defaults-file=/etc/my.cnf -uroot -p%s --default-character-set=%s -vvv %s < %s",
-			k.BaseInfo.RootPwd, k.BaseInfo.Charset, db, file))
+// getExecuteSQLCmds 获取针对单个数据库的 SQL 执行命令列表
+// 包括清理 DEFINER 和执行 SQL 的命令
+func (k *DbPodSets) getExecuteSQLCmds(file, db string) []string {
+	return []string{
+		fmt.Sprintf("sed -i 's/[[:space:]]DEFINER=`[^`]*`@`[^`]*`//g' %s", file),
+		fmt.Sprintf("sed -i \"s/[[:space:]]DEFINER='[^']*'@'[^']*'//g\" %s", file),
+		fmt.Sprintf("mysql --defaults-file=/etc/my.cnf -uroot -p%s --default-character-set=%s -vvv %s < %s",
+			k.BaseInfo.RootPwd, k.BaseInfo.Charset, db, file),
 	}
-	return cmd
 }
 
 func (k *DbPodSets) getDownloadSqlCmd(bkpath, file string) string {
@@ -852,37 +1040,64 @@ func (k *DbPodSets) executeInPod(cmd, container string, extMap map[string]string
 		logger.Error("at remotecommand.NewSPDYExecutor %s", err.Error())
 		return bytes.Buffer{}, bytes.Buffer{}, err
 	}
-	// 导入表结构的时候不打印普通非关键日志
 
+	// 启动 reader goroutine：从 pipe 中逐行读取 pod 的 stdout，
+	// 同时写入命名返回值 stdout（供 caller 拼接 sstdout / 错误日志使用）
+	// 以及打印到 logger（供前端实时展示）。
+	//
+	// 关键约束：
+	//   - exec.StreamWithContext 是同步调用，返回时不会自动 close 调用方传入
+	//     的 writer，必须显式 writer.Close() 让 reader 端见到 EOF，否则
+	//     goroutine 会永久阻塞在 sc.Scan() 上造成泄漏；
+	//   - 主 goroutine 在 <-done 之后才返回 stdout，保证 reader 已把 pipe
+	//     里的所有数据消费完，避免 caller 拿到 partial buffer。
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		buf := []byte{}
 		sc := bufio.NewScanner(reader)
 		sc.Buffer(buf, 2048*1024)
 		lineNumber := 1
 		for sc.Scan() {
+			line := sc.Text()
+			// 导入表结构的时候不打印普通非关键日志
 			if !noLogger {
 				// 此方案打印的日志会在前端展示
-				xlogger.Info("%s", sc.Text())
+				xlogger.Info("%s", line)
 			} else {
-				logger.Info(sc.Text())
+				logger.Info(line)
 			}
+			// 把 pod stdout 行回写到命名返回值 stdout buffer，
+			// 否则上层 sstdout += stdout.String() 永远拿到空字符串。
+			stdout.WriteString(line)
+			stdout.WriteByte('\n')
 			lineNumber++
 		}
-		if err = sc.Err(); err != nil {
-			logger.Error("something bad happened in the line %v: %v", lineNumber, err)
-			return
+		// scan 错误只记录日志，不向上抛 —— 与原行为一致；不再写外层
+		// 命名返回值 err，避免与主 goroutine 的 err 赋值产生数据竞争。
+		if scanErr := sc.Err(); scanErr != nil {
+			logger.Error("scan pod stdout failed at line %v: %v", lineNumber, scanErr)
 		}
 	}()
-	err = exec.StreamWithContext(context.Background(), remotecommand.StreamOptions{
+
+	streamErr := exec.StreamWithContext(context.Background(), remotecommand.StreamOptions{
 		Stdin:  nil,
 		Stdout: writer,
 		Stderr: &stderr,
 		Tty:    false,
 	})
-	if err != nil {
-		xlogger.Error("exec.Stream failed %s:\n stdout:%s\n stderr: %s", err.Error(), strings.TrimSpace(stdout.String()),
+	// 关键：必须主动 close writer，否则 reader goroutine 看不到 EOF，
+	// 会在 sc.Scan() 上永久阻塞。
+	_ = writer.Close()
+	// 等 reader goroutine 把剩余 pipe 数据消费完且退出，保证 stdout 已被
+	// 完整填充，避免 caller 拿到 partial buffer。
+	<-done
+
+	if streamErr != nil {
+		xlogger.Error("exec.Stream failed %s:\n stdout:%s\n stderr: %s", streamErr.Error(),
+			strings.TrimSpace(stdout.String()),
 			strings.TrimSpace(stderr.String()))
-		return stdout, stderr, err
+		return stdout, stderr, streamErr
 	}
 	xlogger.Info("exec successfully...")
 	logger.Info("info stdout:%s\nstderr:%s ", strings.TrimSpace(stdout.String()),

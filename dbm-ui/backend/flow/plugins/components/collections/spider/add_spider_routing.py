@@ -17,16 +17,27 @@ from backend.constants import IP_PORT_DIVIDER
 from backend.db_meta.enums import TenDBClusterSpiderRole
 from backend.db_meta.models import Cluster
 from backend.flow.consts import TDBCTL_USER, PrivRole
-from backend.flow.engine.bamboo.scene.spider.common.exceptions import (
-    AddSpiderNodeFailedException,
-    NormalSpiderFlowException,
-)
+from backend.flow.engine.bamboo.scene.spider.common.exceptions import NormalSpiderFlowException
 from backend.flow.plugins.components.collections.common.base_service import BaseService
 from backend.flow.utils.mysql.mysql_version_parse import tdbctl_version_parse
-from backend.flow.utils.spider.spider_db_function import get_flush_routing_sql_for_server
+from backend.flow.utils.spider.spider_db_function import (
+    check_spider_node_is_add_cluster,
+    get_flush_routing_sql_for_server,
+)
 
 # 支持并发添加节点的最低版本编号: 2.4.13
 MIN_PARALLEL_ROUTE_VERSION = 2004013
+
+# 13以上的中控版本，添加路由时，会自动跳过TC_SKIP_CHECK_DB_LIST中的数据库
+TC_SKIP_CHECK_DB_LIST = [
+    "mysql",
+    "information_schema",
+    "performance_schema",
+    "sys",
+    "test",
+    "infodba_schema",
+    "db_infobase",
+]
 
 
 class AddSpiderRoutingService(BaseService):
@@ -104,21 +115,8 @@ class AddSpiderRoutingService(BaseService):
         @param spider_port: 待检测node的port
         @param cluster: 待关联的cluster对象
         """
-        check_sql = "select * from mysql.servers where Host = '{}' and Port = {}".format(spider_ip, spider_port)
-        res = DRSApi.rpc(
-            {
-                "addresses": [cluster.tendbcluster_ctl_primary_address()],
-                "cmds": ["set tc_admin=0", check_sql],
-                "force": False,
-                "bk_cloud_id": cluster.bk_cloud_id,
-            }
-        )
-        if res[0]["error_msg"]:
-            raise AddSpiderNodeFailedException(
-                message=_("select mysql.servers failed: {}".format(res[0]["error_msg"]))
-            )
-
-        if res[0]["cmd_results"][1]["table_data"]:
+        if check_spider_node_is_add_cluster(cluster=cluster, spider_ip=spider_ip, spider_port=spider_port):
+            # 如果存在则报warning信息
             self.log_warning("The node has already joined, here choose to skip [{}:{}]".format(spider_ip, spider_port))
             return False
 
@@ -219,7 +217,7 @@ class AddSpiderRoutingService(BaseService):
 
         cmds = [
             "set tc_admin=1",
-            "SET GLOBAL tc_skip_check_db_list = 'performance_schema,information_schema,mysql,test,sys,infodba_schema'",
+            f"SET GLOBAL tc_skip_check_db_list = '{','.join(TC_SKIP_CHECK_DB_LIST)}'",
         ]
         rpc_params = {
             "addresses": [ctl_master],
@@ -547,5 +545,5 @@ class AddSpiderRoutingService(BaseService):
 
 class AddSpiderRoutingComponent(Component):
     name = __name__
-    code = "add_add_spider_routing_in_cluster"
+    code = "add_spider_routing_in_cluster"
     bound_service = AddSpiderRoutingService

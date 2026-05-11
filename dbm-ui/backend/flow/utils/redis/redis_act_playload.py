@@ -314,7 +314,42 @@ class RedisActPayload(object):
         return resp
 
     @staticmethod
-    def redis_conf_names_by_cluster_type(cluster_type: str, cluster_version: str) -> list:
+    def redis_conf_names_by_cluster_type(
+        cluster_type: str,
+        cluster_version: str,
+        target_cluster_type: str = None,
+        target_version: str = None,
+    ) -> list[str] | None:
+        """
+        fix:
+            1、如果类型变更，ssd->cache，只继承特地item
+            2、如果类型不变，且为版本降级，只继承特地item
+            3、如果类型不变，且为版本升级，需要继承低版本所有item
+
+        Args:
+            cluster_type: 源集群类型
+            cluster_version: 源集群版本
+            target_cluster_type: 目标集群类型（可选，用于判断类型是否变更）
+            target_version: 目标版本（可选，用于判断版本升级/降级）
+
+        Returns:
+            配置项名称列表。如果返回 None，表示需要继承所有配置项（版本升级场景）
+        """
+        from backend.flow.utils.redis.redis_util import version_ge
+
+        # 判断是否为版本升级场景
+        is_version_upgrade = False
+        if target_version and target_version != cluster_version:
+            is_version_upgrade = version_ge(target_version, cluster_version)
+
+        # 判断类型是否变更
+        type_changed = target_cluster_type and target_cluster_type != cluster_type
+
+        # 场景3：类型不变且版本升级，返回None表示需要继承所有配置项
+        if not type_changed and is_version_upgrade:
+            return None, target_version
+
+        # 场景1和2：类型变更或版本降级，只继承特定配置项
         conf_names: list = []
         if (
             is_redis_instance_type(cluster_type) and cluster_version != RedisVersion.Redis20
@@ -323,7 +358,30 @@ class RedisActPayload(object):
         if is_redis_instance_type(cluster_type) or is_tendisssd_instance_type(cluster_type):
             conf_names.append("maxmemory")
             conf_names.append("databases")
-        return conf_names
+        return conf_names, None
+
+    def _replace_legacy_conf_name(self, conf_name: str, target_version: str = None) -> str:
+        """
+        替换旧版本配置项名称为新版本配置项名称
+
+        Args:
+            conf_name: 配置项名称
+            target_version: 目标版本（可选）
+
+        Returns:
+            替换后的配置项名称
+        """
+        from backend.flow.utils.redis.redis_util import version_ge
+
+        # Redis 5.0+ 将 slave-* 配置项重命名为 replica-*
+        if (
+            target_version
+            and target_version.startswith("Redis")
+            and version_ge(target_version, "5")
+            and conf_name == "slave-lazy-flush"
+        ):
+            return "replica-lazy-flush"
+        return conf_name
 
     def dts_swap_redis_config(self, cluster_map: dict):
         """交换源集群和目标集群的redis配置"""
@@ -349,14 +407,30 @@ class RedisActPayload(object):
             data_type,
         )
 
-        src_conf_names = self.redis_conf_names_by_cluster_type(
-            cluster_map["src_cluster_type"], cluster_map["src_cluster_version"]
+        src_conf_result = self.redis_conf_names_by_cluster_type(
+            cluster_map["src_cluster_type"],
+            cluster_map["src_cluster_version"],
+            target_cluster_type=cluster_map["dst_cluster_type"],
+            target_version=cluster_map["dst_cluster_version"],
         )
+        # 返回值为元组 (conf_names, target_version_for_rename)
+        src_conf_names, src_target_version = (
+            src_conf_result if isinstance(src_conf_result, tuple) else (src_conf_result, None)
+        )
+        # 如果返回None，表示需要继承所有配置项
+        if src_conf_names is None:
+            src_conf_names = list(src_resp["content"].keys())
         src_conf_items = []
         for conf_name in src_conf_names:
             if conf_name in src_resp["content"]:
+                # 场景3下，如果目标版本>=5，需要将slave-lazy-flush替换为replica-lazy-flush
+                new_conf_name = self._replace_legacy_conf_name(conf_name, src_target_version)
                 src_conf_items.append(
-                    {"conf_name": conf_name, "conf_value": src_resp["content"][conf_name], "op_type": OpType.UPDATE}
+                    {
+                        "conf_name": new_conf_name,
+                        "conf_value": src_resp["content"][conf_name],
+                        "op_type": OpType.UPDATE,
+                    }
                 )
 
         logger.info(_("获取目标集群:{} redis配置").format(cluster_map["dst_cluster_domain"]))
@@ -373,14 +447,30 @@ class RedisActPayload(object):
             data_type,
         )
 
-        dst_conf_names = self.redis_conf_names_by_cluster_type(
-            cluster_map["dst_cluster_type"], cluster_map["dst_cluster_version"]
+        dst_conf_result = self.redis_conf_names_by_cluster_type(
+            cluster_map["dst_cluster_type"],
+            cluster_map["dst_cluster_version"],
+            target_cluster_type=cluster_map["src_cluster_type"],
+            target_version=cluster_map["src_cluster_version"],
         )
+        # 返回值为元组 (conf_names, target_version_for_rename)
+        dst_conf_names, dst_target_version = (
+            dst_conf_result if isinstance(dst_conf_result, tuple) else (dst_conf_result, None)
+        )
+        # 如果返回None，表示需要继承所有配置项
+        if dst_conf_names is None:
+            dst_conf_names = list(dst_resp["content"].keys())
         dst_conf_items = []
         for conf_name in dst_conf_names:
             if conf_name in dst_resp["content"]:
+                # 场景3下，如果目标版本>=5，需要将slave-lazy-flush替换为replica-lazy-flush
+                new_conf_name = self._replace_legacy_conf_name(conf_name, dst_target_version)
                 dst_conf_items.append(
-                    {"conf_name": conf_name, "conf_value": dst_resp["content"][conf_name], "op_type": OpType.UPDATE}
+                    {
+                        "conf_name": new_conf_name,
+                        "conf_value": dst_resp["content"][conf_name],
+                        "op_type": OpType.UPDATE,
+                    }
                 )
 
         upsert_param = {
@@ -1237,6 +1327,7 @@ class RedisActPayload(object):
                 cluster_domain = kwargs["params"]["servers"][0].get("cluster_domain", "")
                 if cluster_domain:
                     cluster = Cluster.objects.get(immute_domain=cluster_domain)
+                    payload["nginx_addrs"] = list_nginx_addrs(bk_cloud_id=cluster.bk_cloud_id)
                     payload["redis_maxmemory_set"] = get_dbmon_maxmemory_config_by_cluster_ids([cluster.id])
 
         return {
@@ -1299,6 +1390,7 @@ class RedisActPayload(object):
         except Cluster.DoesNotExist:
             raise Exception("redis cluster {} does not exist".format(params["cluster_domain"]))
         payload = self.get_bkdbmon_payload_header(str(cluster.bk_biz_id))
+        payload["nginx_addrs"] = list_nginx_addrs(bk_cloud_id=cluster.bk_cloud_id)
         payload["redis_maxmemory_set"] = get_dbmon_maxmemory_config_by_cluster_ids([cluster.id])
         if params["is_stop"]:
             payload["servers"] = []
@@ -1323,11 +1415,12 @@ class RedisActPayload(object):
         cluster_list = query_cluster_by_hosts([ip])
         cluster_ids = set()
 
-        servers = []
+        bk_cloud_id, servers = 0, []
         cluster: Cluster = None
         for c in cluster_list:
             try:
                 cluster = Cluster.objects.get(id=c["cluster_id"])
+                bk_cloud_id = cluster.bk_cloud_id
             except Cluster.DoesNotExist:
                 raise Exception("redis cluster {} does not exist".format(c["cluster"]))
             if not is_stop:
@@ -1338,6 +1431,7 @@ class RedisActPayload(object):
             payload = self.get_bkdbmon_payload_header(str(kwargs["params"]["bk_biz_id"]))
         else:
             payload = self.get_bkdbmon_payload_header(str(cluster.bk_biz_id))
+            payload["nginx_addrs"] = list_nginx_addrs(bk_cloud_id=bk_cloud_id)
             payload["redis_maxmemory_set"] = get_dbmon_maxmemory_config_by_cluster_ids(list(cluster_ids))
         payload["servers"] = servers
         return {
@@ -2167,7 +2261,17 @@ class RedisActPayload(object):
                 "format": FormatType.MAP,
             }
         )
-        conf_names = self.redis_conf_names_by_cluster_type(cluster_map["cluster_type"], cluster_map["current_version"])
+        conf_result = self.redis_conf_names_by_cluster_type(
+            cluster_map["cluster_type"],
+            cluster_map["current_version"],
+            target_cluster_type=cluster_map["cluster_type"],
+            target_version=cluster_map["target_version"],
+        )
+        # 返回值为元组 (conf_names, target_version_for_rename)
+        conf_names, _target_version = conf_result if isinstance(conf_result, tuple) else (conf_result, None)
+        # 如果返回None，表示需要继承所有配置项（版本升级场景）
+        if conf_names is None:
+            conf_names = list(src_resp["content"].keys())
         conf_items = []
         for conf_name in conf_names:
             if conf_name in src_resp["content"]:
@@ -2531,13 +2635,20 @@ class RedisActPayload(object):
             conf_type=conf_type,
             data_type=data_type,
         )
-        conf_names = self.redis_conf_names_by_cluster_type(cluster.cluster_type, cluster.major_version)
+        conf_result = self.redis_conf_names_by_cluster_type(cluster.cluster_type, cluster.major_version)
+        # 返回值为元组 (conf_names, target_version_for_rename)
+        conf_names, target_version = conf_result if isinstance(conf_result, tuple) else (conf_result, None)
+        # 处理返回值为None的情况（虽然域名重命名场景不应该返回None，但为了健壮性）
+        if conf_names is None:
+            conf_names = list(old_dbconfig_data["content"].keys())
         update_conf_items = []
         for conf_name in conf_names:
             if conf_name in old_dbconfig_data["content"]:
+                # 如果目标版本>=5，需要将slave-lazy-flush替换为replica-lazy-flush
+                new_conf_name = self._replace_legacy_conf_name(conf_name, target_version)
                 update_conf_items.append(
                     {
-                        "conf_name": conf_name,
+                        "conf_name": new_conf_name,
                         "conf_value": old_dbconfig_data["content"][conf_name],
                         "op_type": OpType.UPDATE,
                     }

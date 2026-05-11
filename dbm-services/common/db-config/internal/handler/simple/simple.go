@@ -25,6 +25,8 @@ func (cf *Config) Routes() []*gin.RouteInfo {
 		{Method: http.MethodPost, Path: "/conffile/add", HandlerFunc: cf.UpsertConfigFilePlat},
 		{Method: http.MethodPost, Path: "/conffile/update", HandlerFunc: cf.UpdateConfigFilePlat},
 		{Method: http.MethodGet, Path: "/conffile/list", HandlerFunc: cf.ListConfigFiles},
+		{Method: http.MethodGet, Path: "/conffile/list_level_value", HandlerFunc: cf.ListConfigLevel},
+		{Method: http.MethodPost, Path: "/conffile/delete_level_value", HandlerFunc: cf.DeleteConfigLevel},
 		{Method: http.MethodGet, Path: "/conffile/query", HandlerFunc: cf.QueryConfigTypeNamesPlat},
 
 		// config_version
@@ -45,13 +47,18 @@ func (cf *Config) Routes() []*gin.RouteInfo {
 		{Method: http.MethodPost, Path: "/confitem/save", HandlerFunc: cf.SaveConfigFileItems},
 		{Method: http.MethodPost, Path: "/confitem/batchget", HandlerFunc: cf.BatchGetConfigOneItem},
 		{Method: http.MethodPost, Path: "/confitem/validate", HandlerFunc: cf.ValidateValueForClient},
+		{Method: http.MethodPost, Path: "/confitem/recoverdefault", HandlerFunc: cf.RecoverDefaultConfigItems},
 		{Method: http.MethodPost, Path: "/confitem/clonemodule", HandlerFunc: cf.CloneModuleConfig},
+		{Method: http.MethodPost, Path: "/module/clone", HandlerFunc: cf.CloneModuleConfig},
+		{Method: http.MethodPost, Path: "/module/delete", HandlerFunc: cf.DeleteModuleConfig},
 		{Method: http.MethodPost, Path: "/confitem/clonecluster", HandlerFunc: cf.CloneClusterConfig},
+		{Method: http.MethodGet, Path: "/confitem/changes", HandlerFunc: cf.QueryConfItemChanges},
 
 		// config_meta
 		{Method: http.MethodGet, Path: "/conftype/query", HandlerFunc: cf.QueryConfigTypeInfo},
 		{Method: http.MethodGet, Path: "/confname/list", HandlerFunc: cf.QueryConfigTypeNames},
 		{Method: http.MethodPost, Path: "/confname/change", HandlerFunc: cf.ChangeConfNameDef},
 		{Method: http.MethodGet, Path: "/confname/types", HandlerFunc: cf.ListDataTypes},
+		{Method: http.MethodGet, Path: "/confname/changes", HandlerFunc: cf.QueryConfNameChanges},
 	}
 }

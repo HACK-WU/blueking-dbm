@@ -41,6 +41,26 @@ class _DRSApi(object):
             default_timeout=self.DRS_TIMEOUT,
         )
 
+        self.v2_mysql_rpc = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/mysql/rpc",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("MySQL V2 远程执行"),
+            default_timeout=self.DRS_TIMEOUT,
+        )
+
+        self.v2_mysql_ws = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/mysql/ws",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("MySQL V2 远程执行"),
+            default_timeout=self.DRS_TIMEOUT,
+        )
+
         self.short_rpc = ProxyAPI(
             method="POST",
             base=self.BASE_DOMAIN,
@@ -52,10 +72,31 @@ class _DRSApi(object):
             max_retry_times=1,
         )
 
+        self.v2_short_rpc = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/mysql/rpc",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("DB 远程执行(短耗时)"),
+            default_timeout=self.DRS_SHORT_TIMEOUT,
+            max_retry_times=1,
+        )
+
         self.proxyrpc = ProxyAPI(
             method="POST",
             base=self.BASE_DOMAIN,
             url="proxy-admin/rpc",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("DB PROXY远程执行"),
+            default_timeout=self.DRS_TIMEOUT,
+        )
+
+        self.v2_proxyrpc = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/proxy-admin/rpc",
             module=self.MODULE,
             ssl=ssl_flag,
             description=_("DB PROXY远程执行"),
@@ -117,6 +158,15 @@ class _DRSApi(object):
             description=_("webconsole 远程执行(只读账号)"),
         )
 
+        self.v2_webconsole_rpc = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/webconsole/rpc",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("webconsole 远程执行(只读账号)"),
+        )
+
         # {
         #    "payloads": [
         #        {
@@ -139,6 +189,17 @@ class _DRSApi(object):
             module=self.MODULE,
             ssl=ssl_flag,
             description=_("mysql rpc 复杂接口"),
+            default_timeout=60 * 3,
+        )
+
+        self.v2_mysql_complex_rpc = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/mysql/complex-rpc",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("mysql rpc 复杂接口"),
+            default_timeout=60 * 3,
         )
 
         self.mongodb_rpc = ProxyAPI(

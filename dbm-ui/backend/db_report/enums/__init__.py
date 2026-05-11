@@ -12,6 +12,7 @@ from django.utils.translation import gettext_lazy as _
 
 from blue_krill.data_types.enum import EnumField, StrStructuredEnum
 
+from .ai_analysis_sub_type import AiAnalysisSubType
 from .dbmon_heartbeat_report_sub_type import DbmonHeartbeatReportSubType
 from .kafka_affinity_check_sub_type import KafkaAffinityCheckSubType
 from .meta_check_sub_type import MetaCheckSubType
@@ -19,6 +20,7 @@ from .mysqlbackup_check_sub_type import MysqlBackupCheckSubType
 from .redis_rollback_exercise_task_stage import FAILED_STAGES as REDIS_ROLLBACK_EXER_FAILED_STAGES
 from .redis_rollback_exercise_task_stage import RedisRollbackExerciseTaskStage
 from .redisbackup_check_sub_type import RedisBackupCheckSubType
+from .tdbctl_upgrade_status import TdbctlInstanceRole, TdbctlUpgradeStatus
 
 SWAGGER_TAG = _("巡检报告")
 
@@ -58,6 +60,7 @@ class ReportType(StrStructuredEnum):
     REDIS_DBMON_HEARTBEAT_CHECK = EnumField("dbmon_heartbeat_check", _("dbmon心跳超时检查"))
 
     EXPORTER_CHECK = EnumField("exporter_check", _("exporter监控上报检查"))
+    AGENT_UNIVERSAL_CHECK = EnumField("agent_universal_check", _("Agent通用检查"))
 
     # SQLSERVER
     SQLSERVER_FULL_BACKUP_CHECK = EnumField("sqlserver_full_backup_check", _("全量备份文件异常报告"))
@@ -67,6 +70,8 @@ class ReportType(StrStructuredEnum):
     SQLSERVER_JOB_SYNC_CHECK = EnumField("sqlserver_job_sync_check", _("业务Job的同步巡检"))
     SQLSERVER_LINK_SERVER_SYNC_CHECK = EnumField("sqlserver_link_server_sync_check", _("业务Linkserver的同步巡检"))
     SQLSERVER_USER_SYNC_CHECK = EnumField("sqlserver_user_sync_check", _("业务账号同步巡检"))
+    SQLSERVER_FULL_BACKUP_CHECK_BY_MODEL = EnumField("sqlserver_full_backup_check_by_model", _("全量备份文件异常报告(新)"))
+    SQLSERVER_LOG_BACKUP_CHECK_BY_MODEL = EnumField("sqlserver_log_backup_check_by_model", _("增量备份文件异常报告(新)"))
 
     FAIL_OVER_DRILL = EnumField("fail_over_drill", _("切换演练任务报告"))
     BACKUP_RECOVER_DRILL = EnumField("backup_recover_drill", _("回档演练任务报告"))

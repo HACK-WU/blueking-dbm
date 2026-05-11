@@ -37,6 +37,7 @@ from backend.db_meta.models import (
     Tag,
     TenDBClusterSpiderExt,
 )
+from backend.db_monitor.tasks import sync_cluster_load_by_cluster_type, sync_cluster_stat_by_cluster_type
 from backend.db_services.dbbase.cluster.handlers import ClusterServiceHandler, retrieve_resources
 from backend.db_services.dbbase.cluster.serializers import (
     BatchCheckClusterDbsSerializer,
@@ -87,6 +88,7 @@ from backend.iam_app.handlers.drf_perm.cluster import (
     ClusterListPermission,
     ClusterWebconsolePermission,
 )
+from backend.ticket.models import Todo
 
 SWAGGER_TAG = _("集群通用接口")
 
@@ -369,7 +371,7 @@ class DBBaseViewSet(viewsets.SystemViewSet):
             for attr in machines.values(*data["machine_attrs"]):
                 for key, value in attr.items():
                     # 保留bk_cloud_id有等于0的情况
-                    if value is not None and value not in existing_values[key]:
+                    if value not in existing_values[key]:
                         existing_values[key].add(value)
                         machine_attrs[key].append(
                             {
@@ -444,6 +446,12 @@ class DBBaseViewSet(viewsets.SystemViewSet):
         filter_map = {}
         if data.get("pool"):
             filter_map = {"pool": data["pool"]}
+        if data.get("is_todo"):
+            user = request.user.username
+            type_map = {"recycle": "RECYCLE_HOST", "fault": "FAULT_HOST"}
+            todos = Todo.objects.filter(operators__contains=user, status="TODO", type=type_map[data["pool"]])
+            host_ids = [todo.context["host_id"] for todo in todos]
+            filter_map = {"bk_host_id__in": host_ids}
         machines = DirtyMachine.objects.filter(**filter_map)
         # 聚合每个属性字段
         machine_attrs: Dict[str, Union[List, Set]] = defaultdict(list)
@@ -458,7 +466,7 @@ class DBBaseViewSet(viewsets.SystemViewSet):
             for attr in machines.values(*data["machine_attrs"]):
                 for key, value in attr.items():
                     # 保留bk_cloud_id有等于0的情况
-                    if value is not None and value not in existing_values[key]:
+                    if value not in existing_values[key]:
                         existing_values[key].add(value)
                         machine_attrs[key].append(
                             {
@@ -713,7 +721,6 @@ class DBBaseViewSet(viewsets.SystemViewSet):
     )
     @action(methods=["GET"], detail=False, serializer_class=QueryClusterCapSerializer, pagination_class=None)
     def query_cluster_stat(self, request, *args, **kwargs):
-        from backend.db_periodic_task.local_tasks.db_meta.sync_cluster_stat import sync_cluster_stat_by_cluster_type
 
         data = self.params_validate(self.get_serializer_class())
         cluster_stat_map = {}
@@ -737,7 +744,6 @@ class DBBaseViewSet(viewsets.SystemViewSet):
     )
     @action(methods=["GET"], detail=False, serializer_class=QueryClusterCapSerializer, pagination_class=None)
     def query_cluster_load(self, request, *args, **kwargs):
-        from backend.db_periodic_task.local_tasks.db_meta.sync_cluster_stat import sync_cluster_load_by_cluster_type
 
         data = self.params_validate(self.get_serializer_class())
         cluster_load_data_map, cluster_load_status_map = {}, {}

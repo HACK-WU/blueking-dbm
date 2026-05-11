@@ -60,11 +60,14 @@ class ClusterType(StrStructuredEnum):
     OraclePrimaryStandby = EnumField("oracle_primary_standby", _("oracle主从版"))
     OracleSingleNone = EnumField("oracle_single_none", _("oracle单节点版"))
 
-    # k8s集群
-    K8sSurreal = EnumField("k8s_surreal", _("k8s surrealdb集群"))
-    K8sVM = EnumField("k8s_vm", _("k8s Victoria metrics集群"))
-    K8sRW = EnumField("k8s_rw", _("k8s Risingwave集群"))
-    K8sMV = EnumField("k8s_mv", _("k8s Milvus集群"))
+    # k8s集群 HA/Single 拆分
+    K8sSurrealdbHa = EnumField("k8s_surrealdb_ha", _("k8s SurrealDB集群版"))
+    K8sSurrealdbSingle = EnumField("k8s_surrealdb_single", _("k8s SurrealDB单机版"))
+    K8sVictoriametricsHa = EnumField("k8s_victoriametrics_ha", _("k8s VictoriaMetrics集群版"))
+    K8sRisingwaveHa = EnumField("k8s_risingwave_ha", _("k8s Risingwave集群版"))
+    K8sGreptimedbHa = EnumField("k8s_greptimedb_ha", _("k8s GreptimeDB集群版"))
+    K8sMilvusHa = EnumField("k8s_milvus_ha", _("k8s Milvus集群版"))
+    K8sQdrantHa = EnumField("k8s_qdrant_ha", _("k8s Qdrant集群版"))
 
     @classmethod
     def db_type_cluster_types_map(cls) -> Dict[str, List]:
@@ -101,7 +104,12 @@ class ClusterType(StrStructuredEnum):
             DBType.Doris.value: [cls.Doris],
             DBType.Vm.value: [cls.Vm],
             DBType.Oracle.value: [cls.OraclePrimaryStandby, cls.OracleSingleNone],
-            DBType.K8s.value: [cls.K8sSurreal, cls.K8sVM, cls.K8sRW, cls.K8sMV],
+            DBType.K8sSurrealdb.value: [cls.K8sSurrealdbHa, cls.K8sSurrealdbSingle],
+            DBType.K8sVictoriametrics.value: [cls.K8sVictoriametricsHa],
+            DBType.K8sRisingwave.value: [cls.K8sRisingwaveHa],
+            DBType.K8sMilvus.value: [cls.K8sMilvusHa],
+            DBType.K8sQdrant.value: [cls.K8sQdrantHa],
+            DBType.K8sGreptimedb.value: [cls.K8sGreptimedbHa],
         }
 
     @classmethod
@@ -111,6 +119,22 @@ class ClusterType(StrStructuredEnum):
         """
         db_type_cluster_types_map = cls.db_type_cluster_types_map()
         return db_type_cluster_types_map.get(db_type)
+
+    @classmethod
+    def k8s_container_cluster_type_values(cls) -> frozenset:
+        """K8s 容器类集群的 cluster_type 取值（与扁平化后的 DBType 一一对应）。"""
+        return frozenset(
+            t.value
+            for t in (
+                cls.K8sSurrealdbHa,
+                cls.K8sSurrealdbSingle,
+                cls.K8sVictoriametricsHa,
+                cls.K8sRisingwaveHa,
+                cls.K8sMilvusHa,
+                cls.K8sQdrantHa,
+                cls.K8sGreptimedbHa,
+            )
+        )
 
     @classmethod
     def cluster_type_to_db_type(cls, cluster_type):

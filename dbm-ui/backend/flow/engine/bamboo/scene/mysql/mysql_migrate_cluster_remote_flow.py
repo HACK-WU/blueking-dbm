@@ -254,7 +254,6 @@ class MySQLMigrateClusterRemoteFlow(object):
             install_sub_pipeline_list.append(install_sub_pipeline.build_sub_process(sub_name=_("安装实例")))
 
             # 生成checksum信息
-            checksum_pairs = []
             checksum_info = {
                 "bk_biz_id": cluster_class.bk_biz_id,
                 "ticket_type": TicketType.MYSQL_CHECKSUM_CRON,
@@ -293,7 +292,8 @@ class MySQLMigrateClusterRemoteFlow(object):
                 cluster["change_master_force"] = False
                 cluster["change_master"] = False
                 cluster["restore_privilege"] = True
-                cluster["privilege_ips"] = [self.data["master_ip"], self.data["slave_ip"]]
+                # cluster["privilege_ips"] = [self.data["master_ip"], self.data["slave_ip"]]
+                cluster["privilege_ips"] = [self.data["slave_ip"]]
                 cluster["charset"] = self.data["charset"]
                 cluster["backup_source"] = self.ticket_data["backup_source"]
 
@@ -330,12 +330,6 @@ class MySQLMigrateClusterRemoteFlow(object):
                         "ignore_dbs": [],
                         "table_patterns": ["*"],
                         "ignore_tables": [],
-                    }
-                )
-                checksum_pairs.append(
-                    {
-                        "master": master_model.ip_port,
-                        "slave": f"{self.data['new_master_ip']}{IP_PORT_DIVIDER}{master_model.port}",
                     }
                 )
 
@@ -397,7 +391,12 @@ class MySQLMigrateClusterRemoteFlow(object):
                         act_component_code=MySQLCheckSumTicketResultComponent.code,
                         kwargs={
                             "bk_cloud_id": cluster_class.bk_cloud_id,
-                            "checksum_pairs": checksum_pairs,
+                            "checksum_pairs": [
+                                {
+                                    "master": master_model.ip_port,
+                                    "slave": f"{self.data['new_master_ip']}{IP_PORT_DIVIDER}{master_model.port}",
+                                }
+                            ],
                             "cluster_id": cluster_model.id,
                         },
                     )
@@ -664,12 +663,22 @@ class MySQLMigrateClusterRemoteFlow(object):
             tendb_migrate_pipeline.add_parallel_sub_pipeline(sub_flow_list=uninstall_svr_sub_pipeline_list)
             tendb_migrate_pipeline_list.append(
                 tendb_migrate_pipeline.build_sub_process(
-                    sub_name=_("{} > {} 成对迁移".format(self.data["master_ip"], self.data["new_master_ip"]))
+                    sub_name=_(
+                        "{} > {} 成对迁移 {}".format(
+                            self.data["master_ip"], self.data["new_master_ip"], cluster_class.immute_domain
+                        )
+                    )
                 )
             )
         # 运行流程
         tendb_migrate_pipeline_all.add_parallel_sub_pipeline(tendb_migrate_pipeline_list)
-        tendb_migrate_pipeline_all.run_pipeline(
+        # tendb_migrate_pipeline_all.run_pipeline(
+        #     init_trans_data_class=ClusterInfoContext(),
+        #     is_drop_random_user=True,
+        # )
+        # 启动接入单据值守监听
+        tendb_migrate_pipeline_all.run_pipeline_with_sidecar(
             init_trans_data_class=ClusterInfoContext(),
             is_drop_random_user=True,
+            check_ai_monitor_cluster_list=list(set(cluster_ids)),
         )

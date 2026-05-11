@@ -53,6 +53,7 @@
       <BkButton
         class="mr-8"
         :disabled="sumbitDisable"
+        :loading="updateInfoLoading"
         theme="primary"
         @click="handleConfirm">
         {{ t('确定') }}
@@ -153,6 +154,7 @@
   });
   const updateInfo = reactive<UpdateInfo>(defaultUpdateInfo());
   const sumbitDisable = ref(false);
+  const updateInfoLoading = ref(false);
 
   const handleChange = () => {
     Object.assign(targetInfo, defaultTargetInfo());
@@ -161,57 +163,67 @@
   };
 
   const handleAutoUpdate = (row: ClusterSpecModel) => {
+    updateInfoLoading.value = true;
     getRedisClusterCapacityUpdateInfo({
       cluster_id: props.cluster.id!,
       new_machine_group_num: row.machine_pair,
       new_shards_num: row.cluster_shard_num,
       new_spec_id: row.spec_id,
       new_storage_version: props.dbVersion!,
-    }).then((data) => {
-      if (data.err_msg) {
-        sumbitDisable.value = true;
-        messageError(data.err_msg);
-        autoSchemaRef.value?.disable(row.spec_id);
-        return;
-      }
-      sumbitDisable.value = false;
-      autoSchemaRef.value?.choose(row.spec_id);
-      Object.assign(targetInfo, {
-        capacity: row.cluster_capacity,
-        clusterShardNum: row.cluster_shard_num,
-        clusterStats: props.cluster.cluster_stats,
-        groupNum: row.machine_pair,
-        shardNum: row.cluster_shard_num,
-        spec: {
-          cpu: row.cpu,
-          mem: row.mem,
-          qps: row.qps,
-          spec_id: row.spec_id,
-          spec_name: row.spec_name,
-          storage_spec: row.storage_spec,
-        },
+    })
+      .then((data) => {
+        if (data.err_msg) {
+          sumbitDisable.value = true;
+          messageError(data.err_msg);
+          autoSchemaRef.value?.disable(row.spec_id);
+          return;
+        }
+        sumbitDisable.value = false;
+        autoSchemaRef.value?.choose(row.spec_id);
+        Object.assign(targetInfo, {
+          capacity: row.cluster_capacity,
+          clusterShardNum: row.cluster_shard_num,
+          clusterStats: props.cluster.cluster_stats,
+          groupNum: row.machine_pair,
+          shardNum: row.cluster_shard_num,
+          spec: {
+            cpu: row.cpu,
+            mem: row.mem,
+            qps: row.qps,
+            spec_id: row.spec_id,
+            spec_name: row.spec_name,
+            storage_spec: row.storage_spec,
+          },
+        });
+        Object.assign(updateInfo, data);
+      })
+      .finally(() => {
+        updateInfoLoading.value = false;
       });
-      Object.assign(updateInfo, data);
-    });
   };
 
   const handleCustomUpdate = (payload: TargetInfo) => {
+    updateInfoLoading.value = true;
     getRedisClusterCapacityUpdateInfo({
       cluster_id: props.cluster.id!,
       new_machine_group_num: payload.groupNum,
       new_shards_num: payload.clusterShardNum,
       new_spec_id: Number(payload.spec.spec_id),
       new_storage_version: props.dbVersion!,
-    }).then((data) => {
-      if (data.err_msg) {
-        sumbitDisable.value = true;
-        messageError(data.err_msg);
-        return;
-      }
-      sumbitDisable.value = false;
-      Object.assign(targetInfo, payload);
-      Object.assign(updateInfo, data);
-    });
+    })
+      .then((data) => {
+        if (data.err_msg) {
+          sumbitDisable.value = true;
+          messageError(data.err_msg);
+          return;
+        }
+        sumbitDisable.value = false;
+        Object.assign(targetInfo, payload);
+        Object.assign(updateInfo, data);
+      })
+      .finally(() => {
+        updateInfoLoading.value = false;
+      });
   };
 
   const handleLabelChange = (value: UnwrapRef<typeof targetInfo>['labels']) => {
@@ -264,31 +276,31 @@
         }
       }
 
-      .deploy-table {
-        margin-top: 12px;
+      // .deploy-table {
+      //   margin-top: 12px;
 
-        :deep(.cluster-name) {
-          padding: 8px 0;
-          line-height: 16px;
+      //   :deep(.cluster-name) {
+      //     padding: 8px 0;
+      //     line-height: 16px;
 
-          &__alias {
-            color: @light-gray;
-          }
-        }
+      //     .cluster-name-alias {
+      //       color: @light-gray;
+      //     }
+      //   }
 
-        :deep(.bk-form-label) {
-          display: none;
-        }
+      //   :deep(.bk-form-label) {
+      //     display: none;
+      //   }
 
-        :deep(.bk-form-error-tips) {
-          top: 50%;
-          transform: translateY(-50%);
-        }
+      //   :deep(.bk-form-error-tips) {
+      //     top: 50%;
+      //     transform: translateY(-50%);
+      //   }
 
-        :deep(.regex-input) {
-          margin: 8px 0;
-        }
-      }
+      //   :deep(.regex-input) {
+      //     margin: 8px 0;
+      //   }
+      // }
     }
   }
 </style>

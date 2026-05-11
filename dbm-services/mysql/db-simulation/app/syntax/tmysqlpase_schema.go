@@ -21,24 +21,38 @@ import (
 const (
 	// AlterTypeAddColumn add_column
 	AlterTypeAddColumn = "add_column"
-
+	// AlterTypeDropColumn drop_column
+	AlterTypeDropColumn = "drop_column"
+	// AlterTypeDropKey drop_key
+	AlterTypeDropKey = "drop_key"
 	// SQLTypeCreateTable is create table sql
 	SQLTypeCreateTable = "create_table"
 	// SQLTypeCreateDb ise create database sql
 	SQLTypeCreateDb = "create_db"
 	// SQLTypeCreateFunction is create function sql
 	SQLTypeCreateFunction = "create_function"
+	// SQLTypeDropFunction is drop function sql
+	SQLTypeDropFunction = "drop_function"
 	// SQLTypeCreateSpFunction is create sp function sql
 	SQLTypeCreateSpFunction = "create_spfunction"
 	// SQLTypeCreateTrigger is create trigger sql
 	SQLTypeCreateTrigger = "create_trigger"
+	// SQLTypeDropTrigger is drop trigger sql
+	SQLTypeDropTrigger = "drop_trigger"
 	// SQLTypeCreateEvent  is create event sql
 	SQLTypeCreateEvent = "create_event"
+	// SQLTypeDropEvent is drop event sql
+	SQLTypeDropEvent = "drop_event"
 	// SQLTypeCreateProcedure is create procedure sql
 	SQLTypeCreateProcedure = "create_procedure"
+	// SQLTypeDropProcedure is drop procedure sql
+	SQLTypeDropProcedure = "drop_procedure"
 	// SQLTypeCreateView is create view sql
 	SQLTypeCreateView = "create_view"
-
+	// SQLTypeDropView is drop view sql
+	SQLTypeDropView = "drop_view"
+	// SQLTypeRenameTable is rename table sql
+	SQLTypeRenameTable = "rename_table"
 	// SQLTypeInsert is insert sql
 	SQLTypeInsert = "insert"
 	// SQLTypeReplace is replace sql
@@ -59,6 +73,14 @@ const (
 	SQLTypeDropTable = "drop_table"
 	// SQLTypeCreateIndex is create table sql
 	SQLTypeCreateIndex = "create_index"
+	// SQLTypeSetOption is set option sql
+	SQLTypeSetOption = "set_option"
+	// SQLTypeDropIndex is drop index sql
+	SQLTypeDropIndex = "drop_index"
+	// SQLTypeAlterDb is alter db sql
+	SQLTypeAlterDb = "alter_db"
+	// SQLTypeFlush is flush sql
+	SQLTypeFlush = "flush"
 )
 
 // NotAllowedDefaultValColMap 不允许默认值的字段
@@ -99,8 +121,9 @@ func (c ColDef) IsNotAllowDefaultValCol() bool {
 }
 
 // HasInvalidJsonDefault 检查 JSON 字段是否设置了无效的默认值
-// 无效的默认值包括：NULL 关键字、字符串 'null'、空字符串 ”
-// 有效的默认值包括：有效的 JSON 值（如 [], {}, "string" 等）
+// 无效的默认值包括：字符串 'null'（DEFAULT 'null'）、空字符串 ”（DEFAULT ”）
+// 有效的默认值包括：DEFAULT NULL（NULL 关键字，MySQL 5.7 仅允许此形态）、
+// MySQL 8.0.13+ 的表达式默认值（如 DEFAULT (JSON_ARRAY())、DEFAULT ('[]') 等）
 func (c ColDef) HasInvalidJsonDefault() bool {
 	// 只检查 JSON 类型的字段
 	if c.DataType != "json" {
@@ -350,3 +373,19 @@ type ParseIncludeTableBase struct {
 	DbName    string `json:"db_name"`
 	TableName string `json:"table_name"`
 }
+
+type RenameTableResult struct {
+	ParseBase
+	QueryDigestText  string           `json:"query_digest_text"`
+	QueryDigestMd5   string           `json:"query_digest_md5"`
+	RenameTablePairs RenameTablePairs `json:"rename_table_pairs"`
+}
+
+// RenameTablePair represents a pair of old/new table names for RENAME TABLE
+type RenameTablePair struct {
+	OldName string `json:"old_name"`
+	NewName string `json:"new_name"`
+}
+
+// RenameTablePairs is a slice of RenameTablePair for bulk renames
+type RenameTablePairs []RenameTablePair

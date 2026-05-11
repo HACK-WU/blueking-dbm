@@ -13,24 +13,29 @@ import logging
 from django.utils.translation import gettext_lazy as _
 from rest_framework.response import Response
 
-from backend.configuration.constants import DEFAULT_DB_ADMINISTRATORS, DBType
 from backend.configuration.models import DBAdministrator
 from backend.db_meta.enums import ClusterType
-from backend.db_meta.models import AppCache, Cluster
+from backend.dbm_aiagent.mcp_tools.common.auth_parser.base import auth_parse_bizs
+from backend.dbm_aiagent.mcp_tools.common.impl.list_biz_clusters import list_biz_clusters
 from backend.dbm_aiagent.mcp_tools.common.impl.list_biz_dbmodules import list_biz_dbmodules
+from backend.dbm_aiagent.mcp_tools.common.impl.list_bizs_base_info import list_bizs_base_info
 from backend.dbm_aiagent.mcp_tools.common.serializers.empty import EmptyInputSerializer
-from backend.dbm_aiagent.mcp_tools.common.serializers.list_bizs import ListPlatformBizsOutputSerializer
+from backend.dbm_aiagent.mcp_tools.common.serializers.list_bizs import (
+    ListBizsInputSerializer,
+    ListBizsOutputSerializer,
+)
 from backend.dbm_aiagent.mcp_tools.common.serializers.list_cluster import (
     ListBizClustersInputSerializer,
     ListBizClustersOutputSerializer,
 )
+from backend.dbm_aiagent.mcp_tools.common.serializers.list_cluster_type import ListPlatformClusterTypeOutputSerializer
 from backend.dbm_aiagent.mcp_tools.common.serializers.list_dbmodule import (
     ListDBModulesInputSerializer,
     ListDBModulesOutputSerializer,
 )
-from backend.dbm_aiagent.mcp_tools.common.serializers.list_enums import ListPlatformClusterTypeOutputSerializer
-from backend.dbm_aiagent.mcp_tools.constants import DBMAMcpTools, DBMMCPTags
+from backend.dbm_aiagent.mcp_tools.constants import DBMMCPTags, DBMMcpTools
 from backend.dbm_aiagent.mcp_tools.decorators import mcp_tools_api_decorator
+from backend.dbm_aiagent.mcp_tools.exceptions import DBMMcpUsernameNotFoundException
 from backend.dbm_aiagent.mcp_tools.views import McpToolsViewSet
 from backend.iam_app.handlers.drf_perm.base import DBManagePermission
 
@@ -45,96 +50,92 @@ class DBMetaQueryMcpToolsViewSet(McpToolsViewSet):
         request_slz=EmptyInputSerializer,
         response_slz=ListPlatformClusterTypeOutputSerializer,
         tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.DBMETA_QUERY],
+        mcp=[DBMMcpTools.DBMETA_QUERY],
         name_prefix="dbmeta_query",
+        enable=False,
     )
-    def list_platform_cluster_type(self, request, *args, **kwargs):
+    def list_supported_cluster_type(self, request, *args, **kwargs):
         res = {
             "cluster_types": [
                 {"cluster_type_value": ct[0], "cluster_type_name": ct[1]} for ct in ClusterType.get_choices()
             ]
         }
-        logger.info(res)
         return Response(res)
-
-    @mcp_tools_api_decorator(
-        description=str(_("获取业务特定集群类型的模块信息, dbmodule")),
-        request_slz=ListDBModulesInputSerializer,
-        response_slz=ListDBModulesOutputSerializer,
-        tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.DBMETA_QUERY],
-        name_prefix="dbmeta_query",
-    )
-    def list_biz_dbmodules(self, request, *args, **kwargs):
-        bk_biz_id = self.get_param("bk_biz_id")
-        cluster_type = self.get_param("cluster_type")
-
-        return Response({"dbmodules": list_biz_dbmodules(bk_biz_id, cluster_type)})
 
     @mcp_tools_api_decorator(
         description=str(
             _(
-                """获取业务特定集群类型的集群
-        * cluster_type 是必填参数, 如果用户查询没有提供, 则必须要求用户补全. 不得以任何形式自动补充
-        """
+                """获取业务特定集群类型的模块信息, dbmodule
+        * cluster_types 可以用 list_bizs_base_info 获取后作为参数"""
             )
         ),
+        request_slz=ListDBModulesInputSerializer,
+        response_slz=ListDBModulesOutputSerializer,
+        tags=[DBMMCPTags.READ],
+        mcp=[DBMMcpTools.DBMETA_QUERY],
+        mcp_auth_parser=auth_parse_bizs,
+        name_prefix="dbmeta_query",
+        enable=False,
+    )
+    def list_biz_dbmodules(self, request, *args, **kwargs):
+        bk_biz_id = self.get_param("bk_biz_id")
+
+        return Response({"dbmodules": list_biz_dbmodules(bk_biz_id)})
+
+    @mcp_tools_api_decorator(
+        description=str(_("""查询域名, 机器, 实例所属集群基本信息""")),
         request_slz=ListBizClustersInputSerializer,
         response_slz=ListBizClustersOutputSerializer,
         tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.DBMETA_QUERY],
+        mcp=[DBMMcpTools.DBMETA_QUERY, DBMMcpTools.DBM_PUBLIC_MARKET],
+        permission_classes=[],
+        mcp_auth_parser=None,
         name_prefix="dbmeta_query",
     )
-    def list_biz_clusters(self, request, *args, **kwargs):
+    def list_clusters_base_info(self, request, *args, **kwargs):
         bk_biz_id = self.get_param("bk_biz_id")
-        cluster_type = self.get_param("cluster_type")
+        cluster_domains = self.get_param("cluster_domains")
+        ips = self.get_param("ips")
+        instances = self.get_param("instances")
 
-        res = [
-            {
-                "bk_cloud_id": cluster_obj.bk_cloud_id,
-                "bk_biz_id": bk_biz_id,
-                "cluster_type": cluster_obj.cluster_type,
-                "cluster_domain": cluster_obj.immute_domain,
-                "region": cluster_obj.region,
-                "affinity": cluster_obj.disaster_tolerance_level,
-                "status": cluster_obj.status,
-            }
-            for cluster_obj in Cluster.objects.filter(bk_biz_id=bk_biz_id, cluster_type=cluster_type)
-        ]
+        username = request.user.username
+        if not username:
+            raise DBMMcpUsernameNotFoundException()
+
+        if DBAdministrator.is_dba(username):
+            pass
+        else:
+            pass
+
+        if not (ips or instances or cluster_domains):
+            raise Exception("ips, instances, cluster_domains at least one")
+
+        res = list_biz_clusters(
+            ips=ips,
+            instances=instances,
+            cluster_domains=cluster_domains,
+            bk_biz_id=bk_biz_id,
+        )
 
         return Response({"clusters": res})
 
     @mcp_tools_api_decorator(
         description=str(_("获取平台所有业务的中文名, 英文名和组件负责人")),
-        request_slz=EmptyInputSerializer,
-        response_slz=ListPlatformBizsOutputSerializer,
+        request_slz=ListBizsInputSerializer,
+        response_slz=ListBizsOutputSerializer,
         tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.DBMETA_QUERY],
+        mcp=[DBMMcpTools.DBMETA_QUERY, DBMMcpTools.DBM_PUBLIC_MARKET],
         name_prefix="dbmeta_query",
+        permission_classes=[],
+        mcp_auth_parser=None,
     )
-    def list_platform_bizs_base_info(self, request, *args, **kwargs):
-        res = []
-        for app in AppCache.objects.all():
-            bk_biz_id = app.bk_biz_id
-            abbr = app.db_app_abbr
+    def list_bizs_base_info(self, request, *args, **kwargs):
+        bk_biz_ids = self.get_param("bk_biz_ids")
+        app_abbrs = self.get_param("app_abbrs")
 
-            comp_infos = []
-            for biz_admin in DBAdministrator.objects.filter(bk_biz_id=bk_biz_id):
-                db_type = biz_admin.db_type
-                admins = biz_admin.users
-                if not admins:
-                    admins = DEFAULT_DB_ADMINISTRATORS
+        if not (bk_biz_ids or app_abbrs):
+            raise Exception("bk_biz_ids, app_abbrs at least one")
 
-                if db_type == DBType.MySQL:
-                    comp_infos.append(
-                        {"db_type": DBType.MySQL, "cluster_type": ClusterType.TenDBSingle, "dbas": admins[0:2]}
-                    )
-                    comp_infos.append(
-                        {"db_type": DBType.MySQL, "cluster_type": ClusterType.TenDBHA, "dbas": admins[0:2]}
-                    )
-                else:
-                    comp_infos.append({"db_type": db_type, "cluster_type": db_type, "dbas": admins[0:2]})
-
-            res.append({"bk_biz_id": bk_biz_id, "abbr": abbr, "db_components": comp_infos})
+        res = list_bizs_base_info(bk_biz_ids=bk_biz_ids, app_abbrs=app_abbrs)
 
         return Response({"bizs": res})

@@ -54,6 +54,10 @@
       </OperationBtnStatusTips>
       <BkDropdown
         class="ml-8"
+        :popover-options="{
+          clickContentAutoHide: true,
+        }"
+        trigger="click"
         @hide="() => (isCopyDropdown = false)"
         @show="() => (isCopyDropdown = true)">
         <BkButton>
@@ -193,6 +197,7 @@
   import useClusterMachineList from '@views/db-manage/hooks/useClusterMachineList';
 
   interface Props {
+    activePanel: string;
     clusterData: DorisDetailModel;
   }
 
@@ -203,12 +208,19 @@
   const { copyAllIp, copyNotAliveIp } = useCopyMachineIp();
 
   const hostTableRef = ref<InstanceType<typeof DbTable>>();
-  const { quickSearchData, quickSearchValue } = useHostSearchSelect(ClusterTypes.DORIS, {
+  const { initQuickSearchValue, quickSearchData, quickSearchValue } = useHostSearchSelect(ClusterTypes.DORIS, {
     clusterId: props.clusterData.id,
     serviceHandler: () => {
       fetchData();
     },
   });
+
+  watch(
+    () => props.activePanel,
+    () => {
+      initQuickSearchValue();
+    },
+  );
 
   const dataSource = (params: Parameters<typeof fetchClusterMachineList>[0]) =>
     fetchClusterMachineList({

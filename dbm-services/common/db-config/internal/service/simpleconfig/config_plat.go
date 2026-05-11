@@ -9,35 +9,26 @@ import (
 	"bk-dbconfig/pkg/constvar"
 	"bk-dbconfig/pkg/core/logger"
 
+	"github.com/jinzhu/copier"
 	"github.com/pkg/errors"
 	"gorm.io/gorm"
 )
 
 // ConfigNamesBatchUpsert TODO
-func ConfigNamesBatchUpsert(db *gorm.DB, cf api.BaseConfFileDef, confNames []*api.UpsertConfNames) error {
+func ConfigNamesBatchUpsert(db *gorm.DB, cf api.BaseConfFileDef, confNames []*api.UpsertConfNames, opUser string) error {
 	adds := make([]*model.ConfigNameDefModel, 0)
 	updates := make([]*model.ConfigNameDefModel, 0)
 	deletes := make([]*model.ConfigNameDefModel, 0)
 	upserts := make([]*model.ConfigNameDefModel, 0)
 
-	// 目前只允许 update 这几个属性 "value_default", "value_allowed", "flag_status", "flag_locked"，见 ConfigNamesBatchUpdate
+	// 目前只允许 update 这几个属性 "value_default", "value_allowed", "flag_status", "flag_locked"，
+	// 见 ConfigNamesBatchUpdate
 	for _, cn := range confNames {
-		confName := &model.ConfigNameDefModel{
-			Namespace:    cf.Namespace,
-			ConfType:     cf.ConfType,
-			ConfFile:     cf.ConfFile,
-			ConfName:     cn.ConfName,
-			ConfNameLC:   cn.ConfNameLC,
-			ValueAllowed: cn.ValueAllowed,
-			ValueDefault: cn.ValueDefault,
-			ValueType:    cn.ValueType,
-			NeedRestart:  cn.NeedRestart,
-			Description:  cn.Description,
-			FlagVisible:  cn.FlagVisible,
-			FlagReadonly: cn.FlagReadonly,
-			FlagLocked:   cn.FlagLocked,
-			FlagStatus:   cn.FlagStatus, // 废弃，只读属性，允许 api去修改，不允许页面修改
-		}
+		confName := &model.ConfigNameDefModel{}
+		_ = copier.Copy(confName, cn.ConfNameDef)
+		confName.Namespace = cf.Namespace
+		confName.ConfType = cf.ConfType
+		confName.ConfFile = cf.ConfFile
 
 		if cn.OPType == constvar.OPTypeAdd {
 			adds = append(adds, confName)
@@ -53,22 +44,22 @@ func ConfigNamesBatchUpsert(db *gorm.DB, cf api.BaseConfFileDef, confNames []*ap
 	}
 	err := db.Transaction(func(tx *gorm.DB) error {
 		if len(adds) > 0 {
-			if err := model.ConfigNamesBatchCreate(tx, adds); err != nil {
+			if err := model.ConfigNamesBatchCreate(tx, adds, opUser); err != nil {
 				return err
 			}
 		}
 		if len(updates) > 0 {
-			if err := model.ConfigNamesBatchUpdate(tx, updates); err != nil {
+			if err := model.ConfigNamesBatchUpdate(tx, updates, opUser); err != nil {
 				return err
 			}
 		}
 		if len(deletes) > 0 {
-			if err := model.ConfigNamesBatchDelete(tx, deletes); err != nil {
+			if err := model.ConfigNamesBatchDelete(tx, deletes, opUser); err != nil {
 				return err
 			}
 		}
 		if len(upserts) > 0 {
-			if err := model.ConfigNamesBatchSave(tx, upserts); err != nil {
+			if err := model.ConfigNamesBatchSave(tx, upserts, opUser); err != nil {
 				return err
 			}
 		}
@@ -139,7 +130,7 @@ func UpsertConfigFilePlat(r *api.UpsertConfFilePlatReq, clientOPType, opUser str
 			if len(configs) == 0 { // 如果 items 为空，只修改 conf_file 信息
 				return nil
 			}
-			if err := ConfigNamesBatchUpsert(tx, fileDef, r.ConfNames); err != nil {
+			if err := ConfigNamesBatchUpsert(tx, fileDef, r.ConfNames, opUser); err != nil {
 				return err
 			}
 			resp.IsPublished = 0

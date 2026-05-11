@@ -34,7 +34,7 @@
             :disabled="isSubmitting || Boolean(runningReplenishRecord)"
             :loading="isSubmitting"
             theme="primary"
-            @click="handleReplenish">
+            @click="() => handleReplenish()">
             <span v-if="!runningReplenishRecord">{{ t('一键补货') }}</span>
             <template v-else>
               <DbIcon
@@ -94,31 +94,35 @@
           <TableColumn
             col-key="db_type"
             :min-width="120"
-            :title="t('DB 类型')">
+            :title="t('DB 类型')"
+            :width="120">
             <template #default="{ row }: { row: IRowData }">
               {{ dbNameMap[row.db_type] || '--' }}
             </template>
           </TableColumn>
           <TableColumn
             col-key="spec_machine_type"
-            :min-width="120"
-            :title="t('规格类型')">
+            ellipsis
+            :title="t('规格类型')"
+            :width="150">
             <template #default="{ row }: { row: IRowData }">
               {{ machineTypeMap[row.spec_machine_type] || '--' }}
             </template>
           </TableColumn>
           <TableColumn
             col-key="spec_name"
-            :min-width="120"
-            :title="t('规格')">
+            ellipsis
+            :title="t('规格')"
+            :width="180">
             <template #default="{ row }: { row: IRowData }">
               {{ row.spec_name || '--' }}
             </template>
           </TableColumn>
           <TableColumn
             col-key="city"
-            :min-width="120"
-            :title="t('地域')">
+            :min-width="100"
+            :title="t('地域')"
+            :width="100">
             <template #default="{ row }: { row: IRowData }">
               {{ row.city || '--' }}
             </template>
@@ -126,15 +130,17 @@
           <TableColumn
             col-key="subzone"
             :min-width="120"
-            :title="t('园区')">
+            :title="t('园区')"
+            :width="120">
             <template #default="{ row }: { row: IRowData }">
               {{ row.subzone || '--' }}
             </template>
           </TableColumn>
           <TableColumn
             col-key="os_name"
-            :min-width="120"
-            :title="t('操作系统')">
+            :min-width="200"
+            :title="t('操作系统')"
+            :width="200">
             <template #default="{ row }: { row: IRowData }">
               {{ row.os_name || '--' }}
             </template>
@@ -150,7 +156,8 @@
           <TableColumn
             col-key="machine_refer_count"
             :min-width="120"
-            :title="t('参考水位（台）')">
+            :title="t('参考水位（台）')"
+            :width="120">
             <template #default="{ row }: { row: IRowData }">
               <span class="bold-number">{{ row.machine_refer_count }}</span>
             </template>
@@ -158,7 +165,8 @@
           <TableColumn
             col-key="resource_count"
             :min-width="120"
-            :title="t('当前数量（台）')">
+            :title="t('当前数量（台）')"
+            :width="120">
             <template #default="{ row }: { row: IRowData }">
               <span class="bold-number blue-number">{{ row.resource_count }}</span>
             </template>
@@ -166,7 +174,8 @@
           <TableColumn
             col-key="resource_count"
             :min-width="150"
-            :title="t('待补充数量（台）')">
+            :title="t('待补充数量（台）')"
+            :width="150">
             <template #default="{ row }: { row: IRowData }">
               <span class="bold-number red-number">
                 {{ Math.max(row.machine_refer_count - row.resource_count, 0) }}
@@ -391,9 +400,8 @@
 <style lang="less">
   .resource-pool-replenish-list {
     padding: 16px 24px;
-    font-family: MicrosoftYaHei;
     background: #fff;
-    box-shadow: 0 2px 4px 0 rgba(25, 25, 41, 0.05);
+    box-shadow: 0 2px 4px 0 rgb(25 25 41 / 5%);
 
     .top-operation {
       display: flex;
@@ -402,12 +410,11 @@
     }
 
     .bold-number {
-      font-family: MicrosoftYaHei-Bold;
-      font-weight: 700;
       font-size: 12px;
-      color: #4d4f56;
-      letter-spacing: 0;
+      font-weight: 700;
       line-height: 20px;
+      letter-spacing: 0;
+      color: #4d4f56;
     }
 
     .blue-number {
@@ -440,13 +447,13 @@
   }
 
   .replenish-confirm-tip {
+    width: 100%;
+    padding: 12px 16px;
+    font-size: 14px;
+    line-height: 22px;
+    letter-spacing: 0;
+    color: #4d4f56;
     background: #f5f7fa;
     border-radius: 2px;
-    font-size: 14px;
-    color: #4d4f56;
-    letter-spacing: 0;
-    width: 100%;
-    line-height: 22px;
-    padding: 12px 16px;
   }
 </style>

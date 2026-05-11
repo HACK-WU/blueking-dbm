@@ -21,15 +21,15 @@ func ValidateValueForClient(items []*api.UpsertConfNames, checkReadonly bool) er
 		if c.ValueType == "" {
 			errs = errors.Join(errs, errors2.Errorf("conf_name %s value_type is empty", c.ConfName))
 		}
-		if checkReadonly && (c.FlagLocked == 1 || c.FlagReadonly == 1) {
-			errs = errors.Join(errs, errors2.Errorf("conf_name %s is readonly", c.ConfName))
-		}
-		if c.OPType == "remove" || util.ConfValueIsPlaceHolder(c.ValueDefault) {
+		if c.OPType == "remove" {
 			continue
+		}
+		if checkReadonly && c.FlagReadonly == 1 {
+			errs = errors.Join(errs, errors2.Errorf("conf_name %s is readonly", c.ConfName))
 		}
 
 		if err = validatestruct.ValidateConfValue(c.ValueDefault, c.ValueType, c.ValueTypeSub, c.ValueAllowed); err != nil {
-			errs = errors.Join(errs, err)
+			errs = errors.Join(errs, errors2.WithMessagef(err, c.ConfName))
 		}
 	}
 	return errs

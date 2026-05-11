@@ -152,8 +152,10 @@
             @refresh="fetchDetailData">
           </BaseInfo>
         </template>
-        <template #hostContent>
-          <HostList :cluster-data="data" />
+        <template #hostContent="{ activePanel }">
+          <HostList
+            :active-panel="activePanel"
+            :cluster-data="data" />
         </template>
         <template #instanceContent>
           <BigDataInstanceList
@@ -176,21 +178,6 @@
           v-if="data"
           :cluster-id="data.id"
           :db-type="DBTypes.HDFS" />
-        <template #footer>
-          <BkButton @click="handleHidePassword">
-            {{ t('关闭') }}
-          </BkButton>
-        </template>
-      </BkDialog>
-      <BkDialog
-        v-model:is-show="isShowPassword"
-        render-directive="if"
-        :title="t('获取访问方式')"
-        :width="500">
-        <RenderPassword
-          v-if="data"
-          :cluster-id="data.id"
-          :db-type="DBTypes.ES" />
         <template #footer>
           <BkButton @click="handleHidePassword">
             {{ t('关闭') }}

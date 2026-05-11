@@ -20,3 +20,11 @@ class MongodbBackupCheckSubType(StrStructuredEnum):
 
 class MongodbExporterCheckSubType(StrStructuredEnum):
     Up = EnumField("mongodb_up", _("mongodb_up指标"))
+
+
+class MongodbAffinityCheckSubType(StrStructuredEnum):
+    ClusterAffinity = EnumField("cluster_affinity", _("集群亲和性"))
+
+
+class StorageInstanceStatusCheckSubType(StrStructuredEnum):
+    SyncStatus = EnumField("sync_storage_instance_status", _("同步storage实例状态"))

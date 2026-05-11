@@ -60,6 +60,10 @@
       </OperationBtnStatusTips>
       <BkDropdown
         class="ml-8"
+        :popover-options="{
+          clickContentAutoHide: true,
+        }"
+        trigger="click"
         @hide="() => (isCopyDropdown = false)"
         @show="() => (isCopyDropdown = true)">
         <BkButton>
@@ -205,6 +209,7 @@
   import ClusterShrink from '@views/db-manage/pulsar/common/shrink/Index.vue';
 
   interface Props {
+    activePanel: string;
     clusterData: PulsarDetailModel;
   }
 
@@ -216,12 +221,19 @@
   const { copyAllIp, copyNotAliveIp } = useCopyMachineIp();
 
   const hostTableRef = ref<InstanceType<typeof DbTable>>();
-  const { quickSearchData, quickSearchValue } = useHostSearchSelect(ClusterTypes.PULSAR, {
+  const { initQuickSearchValue, quickSearchData, quickSearchValue } = useHostSearchSelect(ClusterTypes.PULSAR, {
     clusterId: props.clusterData.id,
     serviceHandler: () => {
       fetchData();
     },
   });
+
+  watch(
+    () => props.activePanel,
+    () => {
+      initQuickSearchValue();
+    },
+  );
 
   const dataSource = (params: Parameters<typeof fetchClusterMachineList>[0]) =>
     fetchClusterMachineList({

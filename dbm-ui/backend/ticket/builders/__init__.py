@@ -30,6 +30,7 @@ from backend.db_meta.models import AppCache, Cluster, Machine, ProxyInstance, St
 from backend.db_services.dbbase.constants import IpSource
 from backend.iam_app.dataclass.actions import ActionEnum
 from backend.ticket.constants import TICKET_EXPIRE_DEFAULT_CONFIG, FlowRetryType, FlowType, TicketType
+from backend.ticket.exceptions import TicketResourceApplyException
 from backend.ticket.models import Flow, Ticket, TicketFlowsConfig
 from backend.utils.register import re_import_modules
 
@@ -219,9 +220,35 @@ class ResourceApplyParamBuilder(CallBackBuilderMixin):
         """
         pass
 
+    def validate_spec(self):
+        if self.allow_resource_empty:
+            return
+
+        resource_list = []
+        if self.ticket_data.get("infos"):
+            for info in self.ticket_data["infos"]:
+                if info.get("resource_spec"):
+                    resource_list.append(info["resource_spec"])
+        if self.ticket_data.get("resource_spec"):
+            resource_list.append(self.ticket_data["resource_spec"])
+
+        for resource in resource_list:
+            for role in resource:
+                if not resource[role]:
+                    continue
+                spec_id = resource[role].get("spec_id")
+                hosts = resource[role].get("hosts")
+                apply_count = resource[role].get("count")
+                # spec_id 为0 且有hosts为手动选择资源
+                if not spec_id and not hosts:
+                    raise TicketResourceApplyException(_("申请资源的规格id不能为0或为空"))
+                if not apply_count and not hosts:
+                    raise TicketResourceApplyException(_("申请资源的数量不能为0或为空"))
+
     def get_params(self):
         self.format()
         self.ticket_data.update(allow_resource_empty=self.allow_resource_empty)
+        self.validate_spec()
         super().add_common_params()
         super().inject_callback_in_params(params=self.ticket_data)
         return self.ticket_data
@@ -315,7 +342,7 @@ class ResourceApplyParamBuilder(CallBackBuilderMixin):
             """找到集群和存量机型的映射"""
 
             # 存量主机的通用过滤
-            common_filters = Q(machine__machine_type=remain_machine_type, cluster__in=cluster_ids) & ~Q(
+            common_filters = Q(machine__machine_type=remain_machine_type, cluster=cluster) & ~Q(
                 machine__bk_host_id__in=off_host_ids
             )
 
@@ -348,17 +375,17 @@ class ResourceApplyParamBuilder(CallBackBuilderMixin):
         cluster_map = Cluster.objects.in_bulk(cluster_ids)
         tolerance = tolerance or 0
 
-        cluster__remain_hosts_map = defaultdict(list)
-        off_host_ids = []
-        # 如果有replace_key，则说明是替换单据，找到替换的机器
-        if replace_key:
-            off_host_ids = [host["bk_host_id"] for info in infos for host in info["old_nodes"][replace_key]]
-        # 考虑存量机型
-        if remain_machine_type:
-            cluster__remain_hosts_map = __get_exclusive_hosts()
-
         for info in infos:
             cluster = cluster_map[fetch_cluster_ids(info)[0]]
+            cluster__remain_hosts_map = defaultdict(list)
+            off_host_ids = []
+            # 如果有replace_key，则说明是替换单据，找到替换的机器
+            if replace_key:
+                off_host_ids = [host["bk_host_id"] for host in info["old_nodes"][replace_key]]
+            # 考虑存量机型
+            if remain_machine_type:
+                cluster__remain_hosts_map = __get_exclusive_hosts()
+
             cluster_tolerance = (
                 tolerance(cluster.disaster_tolerance_level, tolerance_type)
                 if isinstance(tolerance, Callable)

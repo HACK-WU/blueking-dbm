@@ -2078,26 +2078,26 @@ class ActKwargs:
 
     def get_dbmon_operation_kwargs(self, node_info: dict, operation_type: str) -> dict:
         """dbmon操作的kwargs"""
-
+        exec_account = ExecuteShellScriptUser.Mysql.value
         if operation_type == MongoInstanceDbmonType.ShieldDbmon:
             script_content = mongodb_script_template.mongodb_dbmon_shield_port.replace(
                 "{{port}}", str(node_info["port"])
-            )
+            ).replace("{{exec_account}}", exec_account)
         elif operation_type == MongoInstanceDbmonType.UnblockDbmon:
             script_content = mongodb_script_template.mongodb_dbmon_unblock_port.replace(
                 "{{port}}", str(node_info["port"])
-            )
+            ).replace("{{exec_account}}", exec_account)
         elif operation_type == MongoInstanceDbmonType.DeleteDbmon:
             script_content = mongodb_script_template.mongodb_dbmon_delete_port.replace(
                 "{{port}}", str(node_info["port"])
-            )
+            ).replace("{{exec_account}}", exec_account)
         return {
             "set_trans_data_dataclass": CommonContext.__name__,
             "get_trans_data_ip_var": None,
             "bk_cloud_id": self.payload["bk_cloud_id"],
             "bk_host_list": [{"ip": node_info["ip"], "bk_cloud_id": self.payload["bk_cloud_id"]}],
             "script_content": script_content,
-            "exec_account": ExecuteShellScriptUser.Mysql.value,
+            "exec_account": exec_account,
         }
 
     def get_host_instance_deinstall(self):
@@ -2982,7 +2982,7 @@ class ActKwargs:
         return old_hosts, old_instances
 
     @staticmethod
-    def get_add_alarm_shield_kwargs(ip_list: list, port_list: list, description: str) -> dict:
+    def get_add_alarm_shield_kwargs(ip: str, port: int, description: str) -> dict:
         """获取告警屏蔽参数"""
 
         return {
@@ -2990,13 +2990,9 @@ class ActKwargs:
             "description": description,
             "dimensions": [
                 {
-                    "name": "instance_host",
-                    "values": ip_list,
-                },
-                {
-                    "name": "instance_port",
-                    "values": port_list,
-                },
+                    "name": "instance",
+                    "values": ["{}:{}".format(ip, str(port))],
+                }
             ],
         }
 

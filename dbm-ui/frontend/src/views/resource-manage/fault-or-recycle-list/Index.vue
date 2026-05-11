@@ -41,7 +41,12 @@
           {{ t('批量删除') }}
         </AuthButton>
       </template>
-      <BkDropdown class="ml-8">
+      <BkDropdown
+        class="ml-8"
+        :popover-options="{
+          clickContentAutoHide: true,
+        }"
+        trigger="click">
         <BkButton>
           {{ t('复制') }}
           <DbIcon
@@ -139,7 +144,7 @@
       </TableColumn>
       <TableColumn
         col-key="bk_cpu"
-        :title="t('CPU(核)')">
+        :title="t('CPU（核）')">
         <template #default="{ row }: { row: FaultOrRecycleMachineModel }">
           {{ row.bk_cpu || '--' }}
         </template>
@@ -147,8 +152,7 @@
       <TableColumn
         col-key="bkMemText"
         :min-width="90"
-        :title="t('内存(G)')">
-      </TableColumn>
+        :title="t('内存（G）')" />
       <TableColumn
         col-key="bk_disk"
         :title="t('磁盘总容量(G)')"
@@ -207,10 +211,6 @@
       :tip="t('确认后，主机将标记为待回收，等待处理')"
       :title="t('确认批量将 {n} 台主机转入待回收池？', { n: selected.length })"
       @success="handleRefresh" />
-    <!-- <ImportResourcePool
-      v-model:is-show="isImportResourcePoolShow"
-      :data="curImportData!"
-      @refresh="handleRefresh" /> -->
     <BatchImportResourcePool
       v-model:is-show="isBatchImportResourcePoolShow"
       :host-list="selected"
@@ -219,35 +219,36 @@
 </template>
 
 <script setup lang="tsx">
-  import { Message } from 'bkui-vue';
   import BkButton from 'bkui-vue/lib/button';
   import { useI18n } from 'vue-i18n';
 
   import FaultOrRecycleMachineModel from '@services/model/db-resource/FaultOrRecycleMachine';
   import { getMachinePool, transferMachinePool } from '@services/source/dbdirty';
 
-  import { useSystemEnviron } from '@stores';
-
   import DbStatus from '@components/db-status/index.vue';
   import DbTable from '@components/db-table/IndexNew.vue';
 
+  import BatchImportResourcePool from '@views/resource-manage/common/components/fault-pool-batch-import/Index.vue';
   import OperationDetail from '@views/resource-manage/common/components/operation-detail/Index.vue';
   import ReviewDataDialog from '@views/resource-manage/common/components/review-data-dialog/Index.vue';
   import { useColumnFilter } from '@views/resource-manage/common/hooks/useColumnFilter';
   import { useQuickSearch } from '@views/resource-manage/common/hooks/useQuickSearch';
+  import { useRecycleRefresh } from '@views/resource-manage/common/hooks/useRecycleRefresh';
 
   import { execCopy, messageWarn } from '@utils';
 
-  import BatchImportResourcePool from './components/BatchImportResourcePool/Index.vue';
-
   const { t } = useI18n();
   const route = useRoute();
-  const systemEnvironStore = useSystemEnviron();
 
   const isFaultPool = route.name === 'faultPool';
   const pool = isFaultPool ? 'fault' : 'recycle';
   const { isSearching, quickSearchData, quickSearchValue } = useQuickSearch(pool);
   const { data: columnFilter } = useColumnFilter(pool);
+  const { handleRecycleRefresh } = useRecycleRefresh({
+    onSucess() {
+      handleRefresh();
+    },
+  });
 
   const tableRef = useTemplateRef('tableRef');
 
@@ -359,47 +360,6 @@
   const handleRefresh = () => {
     clearSelection();
     fetchData();
-  };
-
-  const handleRecycleRefresh = (data: ServiceReturnType<typeof transferMachinePool>) => {
-    if (data.hcm_recycle_id) {
-      const { BK_HCM_URL, RESOURCE_INDEPENDENT_BIZ } = systemEnvironStore.urls;
-      const targetHref = `${BK_HCM_URL}/#/business/applications?bizs=${RESOURCE_INDEPENDENT_BIZ}&filter=order_id=${data.hcm_recycle_id}&type=host_recycle`;
-      Message({
-        actions: [
-          {
-            disabled: true,
-            id: 'details',
-          },
-          {
-            disabled: true,
-            id: 'fix',
-          },
-          {
-            id: 'assistant',
-            render: () =>
-              h(
-                'a',
-                {
-                  href: targetHref,
-                  target: '_blank',
-                },
-                ` ${t('查看详情')}`,
-              ),
-          },
-        ],
-        delay: 6000,
-        dismissable: false,
-        message: {
-          code: '',
-          overview: data.message,
-          suggestion: '',
-        },
-        theme: 'success',
-      });
-    }
-
-    handleRefresh();
   };
 
   const handleDeleteRefresh = () => {

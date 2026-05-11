@@ -25,28 +25,33 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"dbm-services/common/dbha-v2/pkg/gerrors"
 	"dbm-services/common/dbha-v2/pkg/storage/hamodel"
 	"dbm-services/common/dbha-v2/pkg/storage/hamysql"
+	"dbm-services/common/dbha-v2/pkg/storage/haprobe"
 )
 
+// DbInstance represents a database instance identified by cloud ID, IP, and port.
 type DbInstance struct {
 	BkCloudID int
 	IP        string
 	Port      int
 }
 
+// DbhaData provides data access methods for DBHA analysis, backed by a GORM database connection.
 type DbhaData struct {
 	DB *hamysql.GormDB
 }
 
-func (ha *DbhaData) GetBizIDs() ([]int, error) {
+// GetBizIDs returns all distinct business IDs from DBM metadata.
+func (ha *DbhaData) GetBizIDs(ctx context.Context) ([]int, error) {
 	bkBizIDs := []int{}
 
-	err := ha.DB.DB().Model(&hamodel.DbmMetadata{}).
+	err := ha.DB.DB().WithContext(ctx).Model(&hamodel.DbmMetadata{}).
 		Select(hamodel.DbmMetadataFieldBkBizID).
 		Group(hamodel.DbmMetadataFieldBkBizID).Find(&bkBizIDs).Error
 
@@ -57,6 +62,7 @@ func (ha *DbhaData) GetBizIDs() ([]int, error) {
 	return bkBizIDs, nil
 }
 
+// ReadMetadataCacheWithBizID reads metadata cache in batches for the given bizID.
 func (ha *DbhaData) ReadMetadataCacheWithBizID(bizID int, batchCnt int,
 	offsetDuration time.Duration) (metaData []*hamodel.DbmMetadata, err error) {
 
@@ -153,8 +159,9 @@ func (ha *DbhaData) ReadDbStatusWithDbInstances(dbInstances []*DbInstance,
 	return
 }
 
-func (ha *DbhaData) SaveSwitchingLog(records ...*hamodel.DbSwitchingLog) error {
-	err := ha.DB.DB().Model(&hamodel.DbSwitchingLog{}).CreateInBatches(records, 100).Error
+// SaveSwitchingLog save switching log into database
+func (ha *DbhaData) SaveSwitchingLog(ctx context.Context, records ...*hamodel.DbSwitchingLog) error {
+	err := ha.DB.DB().WithContext(ctx).Model(&hamodel.DbSwitchingLog{}).CreateInBatches(records, 100).Error
 	if err != nil {
 		return gerrors.NewE(gerrors.MysqlFailure, err)
 	}
@@ -162,20 +169,24 @@ func (ha *DbhaData) SaveSwitchingLog(records ...*hamodel.DbSwitchingLog) error {
 	return err
 }
 
-func (ha *DbhaData) ReadSwitchingStrategyWithBkBizId(bkBizId int) ([]*hamodel.DbSwitchingStrategy, error) {
+// ReadSwitchingStrategyWithBkBizId returns switching strategies for the given business ID.
+func (ha *DbhaData) ReadSwitchingStrategyWithBkBizId(ctx context.Context, bkBizId int) ([]*hamodel.DbSwitchingStrategy, error) {
 	var strategies []*hamodel.DbSwitchingStrategy
 
-	cond := fmt.Sprintf("%s = ? or %s = 0 ", hamodel.DbSwitchingStrategyFieldBkBizID,
-		hamodel.DbSwitchingStrategyFieldBkBizID)
+	cond := fmt.Sprintf("(%s = ? or %s = 0) and %s = ?",
+		hamodel.DbSwitchingStrategyFieldBkBizID,
+		hamodel.DbSwitchingStrategyFieldBkBizID,
+		hamodel.DbSwitchingStrategyFieldStatus)
 
-	query := ha.DB.DB().Model(&hamodel.DbSwitchingStrategy{})
-	if e := query.Where(cond, bkBizId).Find(&strategies).Error; e != nil {
+	query := ha.DB.DB().WithContext(ctx).Model(&hamodel.DbSwitchingStrategy{})
+	if e := query.Where(cond, bkBizId, hamodel.StatusTypeEnabled).Find(&strategies).Error; e != nil {
 		return nil, gerrors.NewE(gerrors.MysqlFailure, e)
 	}
 
 	return strategies, nil
 }
 
+// ReadSkipDbInstancesWithBkBizId returns skip db instances for the given business ID.
 func (ha *DbhaData) ReadSkipDbInstancesWithBkBizId(bkBizId int) ([]*hamodel.SkipDbInstance, error) {
 	var skipDbInstances []*hamodel.SkipDbInstance
 
@@ -187,4 +198,91 @@ func (ha *DbhaData) ReadSkipDbInstancesWithBkBizId(bkBizId int) ([]*hamodel.Skip
 	}
 
 	return skipDbInstances, nil
+}
+
+// ReadBlackWhiteList returns black-white list records for the given business ID and cloud ID.
+func (ha *DbhaData) ReadBlackWhiteList(ctx context.Context, bkBizId int, bkCloudId int) ([]*hamodel.DbBlackWhiteList, error) {
+	var blackWhiteList []*hamodel.DbBlackWhiteList
+
+	cond := fmt.Sprintf("%s = ? and %s = ? and %s = ? and %s = ?",
+		hamodel.DbBlackWhiteListFieldBkBizID,
+		hamodel.DbBlackWhiteListFieldBkCloudID,
+		hamodel.DbBlackWhiteListFieldStatus,
+		hamodel.DbBlackWhiteListFieldSwitchVersion)
+
+	query := ha.DB.DB().WithContext(ctx).Model(&hamodel.DbBlackWhiteList{})
+	if e := query.Where(cond, bkBizId, bkCloudId, hamodel.StatusTypeEnabled,
+		hamodel.SwitchVersionV2).Find(&blackWhiteList).Error; e != nil {
+		return nil, gerrors.NewE(gerrors.MysqlFailure, e)
+	}
+
+	return blackWhiteList, nil
+}
+
+// DbTypeUpdatedCount represents the count of rows grouped by db_type.
+type DbTypeUpdatedCount struct {
+	DbType haprobe.DbType `gorm:"column:db_type"`
+	Count  int64          `gorm:"column:cnt"`
+}
+
+// CountDbmMetadataUpdatedWithin counts the DbmMetadata rows updated within the given duration.
+func (ha *DbhaData) CountDbmMetadataUpdatedWithin(ctx context.Context,
+	offsetDuration time.Duration) ([]*DbTypeUpdatedCount, error) {
+
+	lastUpdateTime := time.Now().Local().Add(-offsetDuration)
+
+	type row struct {
+		ClusterType haprobe.DbmMetadataClusterType `gorm:"column:cluster_type"`
+		Count       int64                          `gorm:"column:cnt"`
+	}
+
+	var rows []row
+	err := ha.DB.DB().WithContext(ctx).Model(&hamodel.DbmMetadata{}).
+		Select(fmt.Sprintf("%s AS cluster_type, COUNT(*) AS cnt",
+			hamodel.DbmMetadataFieldClusterType,
+		)).
+		Where(fmt.Sprintf("%s > ?", hamodel.DbmMetadataFieldUpdatedAt), lastUpdateTime).
+		Group(hamodel.DbmMetadataFieldClusterType).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, gerrors.NewE(gerrors.MysqlFailure, err)
+	}
+
+	counters := make(map[haprobe.DbType]int64, len(rows))
+	for _, r := range rows {
+		dbType := hamodel.DbmMetadata{ClusterType: r.ClusterType}.GetDbType()
+		counters[dbType] += r.Count
+	}
+
+	result := make([]*DbTypeUpdatedCount, 0, len(counters))
+	for k, cnt := range counters {
+		result = append(result, &DbTypeUpdatedCount{
+			DbType: k,
+			Count:  cnt,
+		})
+	}
+
+	return result, nil
+}
+
+// CountDbhaDataStatusUpdatedWithin counts the DbhaDataStatus rows updated within the given duration.
+func (ha *DbhaData) CountDbhaDataStatusUpdatedWithin(ctx context.Context,
+	offsetDuration time.Duration) ([]*DbTypeUpdatedCount, error) {
+
+	lastUpdateTime := time.Now().Local().Add(-offsetDuration)
+
+	var result []*DbTypeUpdatedCount
+
+	err := ha.DB.DB().WithContext(ctx).Model(&hamodel.DbhaDataStatus{}).
+		Select(fmt.Sprintf("%s AS db_type, COUNT(*) AS cnt",
+			hamodel.DbhaStatusFieldDbTypeName,
+		)).
+		Where(fmt.Sprintf("%s > ?", hamodel.DbhaStatusFieldUpdatedAt), lastUpdateTime).
+		Group(hamodel.DbhaStatusFieldDbTypeName).
+		Scan(&result).Error
+	if err != nil {
+		return nil, gerrors.NewE(gerrors.MysqlFailure, err)
+	}
+
+	return result, nil
 }

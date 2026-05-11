@@ -69,15 +69,16 @@ type ResetAPI struct {
 
 // GinHTTPServer Gin HTTP server implementation
 type GinHTTPServer struct {
-	config      *GinServerConfig
-	authHandler AuthHandler
-	rateLimit   *RateLimitConfig
-	resetAPIs   []*ResetAPI
-	server      *http.Server
-	router      *gin.Engine
-	mu          sync.RWMutex
-	wg          sync.WaitGroup
-	started     bool
+	config           *GinServerConfig
+	authHandler      AuthHandler
+	rateLimit        *RateLimitConfig
+	resetAPIs        []*ResetAPI
+	server           *http.Server
+	router           *gin.Engine
+	metricMiddleware gin.HandlerFunc
+	mu               sync.RWMutex
+	wg               sync.WaitGroup
+	started          bool
 }
 
 // NewGinHTTPServer creates a new Gin HTTP server
@@ -111,11 +112,23 @@ func (s *GinHTTPServer) SetRateLimit(rateLimit *RateLimitConfig) {
 	s.rateLimit = rateLimit
 }
 
+// SetMetricMiddleware sets metric middleware
+func (s *GinHTTPServer) SetMetricMiddleware(middleware gin.HandlerFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.metricMiddleware = middleware
+}
+
 // RegisterAPI register reset API
 func (s *GinHTTPServer) RegisterAPI(resetAPI *ResetAPI) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.resetAPIs = append(s.resetAPIs, resetAPI)
+}
+
+// SetSwaggerFileRoute sets swagger file route
+func (s *GinHTTPServer) SetSwaggerFileRoute(path string) {
+	s.router.StaticFile("/swagger.json", path)
 }
 
 // Start starts the HTTP server
@@ -125,6 +138,12 @@ func (s *GinHTTPServer) Start() error {
 
 	if s.started {
 		return fmt.Errorf("server already started")
+	}
+
+	// Register validator
+	err := RegisterValidator()
+	if err != nil {
+		return err
 	}
 
 	// Setup middlewares
@@ -139,7 +158,7 @@ func (s *GinHTTPServer) Start() error {
 		defer s.wg.Done()
 		logger.Info("Starting HTTP server on %s", s.server.Addr)
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("Failed to start server: %v", err)
+			logger.Error("failed to start server, errmsg: %s", err)
 		}
 	}()
 
@@ -163,7 +182,7 @@ func (s *GinHTTPServer) Stop() error {
 	defer cancel()
 
 	if err := s.server.Shutdown(ctx); err != nil {
-		logger.Error("Server shutdown error: %v", err)
+		logger.Error("server shutdown error, errmsg: %s", err)
 		return err
 	}
 
@@ -181,6 +200,11 @@ func (s *GinHTTPServer) setupMiddlewares() {
 
 	// Logging middleware
 	s.router.Use(s.loggingMiddleware())
+
+	// Metric middleware
+	if s.metricMiddleware != nil {
+		s.router.Use(s.metricMiddleware)
+	}
 
 	// Rate limiting middleware
 	if s.rateLimit != nil && s.rateLimit.Enabled {
@@ -200,7 +224,7 @@ func (s *GinHTTPServer) setupRoutes() {
 	// register API routes
 	for _, resetAPI := range s.resetAPIs {
 		if resetAPI.Group == "" {
-			if !s.isRouteRegistered(s.router, string(resetAPI.Method), resetAPI.Path) {
+			if s.isRouteRegistered(s.router, string(resetAPI.Method), resetAPI.Path) {
 				continue
 			}
 
@@ -212,7 +236,8 @@ func (s *GinHTTPServer) setupRoutes() {
 			groupAPIs[resetAPI.Group] = s.router.Group(resetAPI.Group)
 		}
 
-		if !s.isRouteRegistered(s.router, string(resetAPI.Method), resetAPI.Path) {
+		fullPath := resetAPI.Group + resetAPI.Path
+		if s.isRouteRegistered(s.router, string(resetAPI.Method), fullPath) {
 			continue
 		}
 

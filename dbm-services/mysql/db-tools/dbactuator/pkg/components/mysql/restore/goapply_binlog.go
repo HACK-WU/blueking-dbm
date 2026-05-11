@@ -123,7 +123,7 @@ func (r *GoApplyBinlog) ParseBinlogFiles() error {
 	logger.Info("start to parse binlog files with concurrency %d", r.ParseConcurrency)
 
 	binlogParseLockFile := "/tmp/mysql_binlog_parse.lock.yaml"
-	fileLock, err := filecontext.NewIncrFile(binlogParseLockFile, r.ParseConcurrency, 10*time.Second)
+	fileLock, err := filecontext.NewIncrFile(binlogParseLockFile, 4, 10*time.Second)
 	if err != nil {
 		return err
 	}
@@ -321,10 +321,11 @@ func (r *GoApplyBinlog) Init() error {
 	// r.BinlogOpt.StartTime r.BinlogOpt.StopTime 是 DateTime 格式，传给 gomysqlbinlog
 	if r.StartTime != "" {
 		if t, err := time.ParseInLocation(time.DateTime, r.StartTime, time.Local); err == nil {
-			r.BinlogOpt.StartTime = r.StartTime
-			r.StartTime = t.Format(time.RFC3339)
+			r.BinlogOpt.StartTime = t.Local().Format(time.DateTime)
+			r.StartTime = t.Local().Format(time.RFC3339)
 		} else if t, err := time.ParseInLocation(time.RFC3339, r.StartTime, time.Local); err == nil {
-			r.BinlogOpt.StartTime = t.Format(time.DateTime)
+			r.BinlogOpt.StartTime = t.Local().Format(time.DateTime)
+			r.StartTime = t.Local().Format(time.RFC3339)
 		} else {
 			return errors.Errorf("unknown time format for start_time: %s", r.StartTime)
 		}
@@ -332,10 +333,11 @@ func (r *GoApplyBinlog) Init() error {
 	if r.StopTime != "" {
 		var stopTime time.Time
 		if t, err := time.ParseInLocation(time.DateTime, r.StopTime, time.Local); err == nil {
-			r.BinlogOpt.StopTime = r.StopTime
-			r.StopTime = t.Format(time.RFC3339)
+			r.BinlogOpt.StopTime = t.Local().Format(time.DateTime)
+			r.StopTime = t.Local().Format(time.RFC3339)
 		} else if t, err := time.ParseInLocation(time.RFC3339, r.StopTime, time.Local); err == nil {
-			r.BinlogOpt.StopTime = t.Format(time.DateTime)
+			r.BinlogOpt.StopTime = t.Local().Format(time.DateTime)
+			r.StopTime = t.Local().Format(time.RFC3339)
 		} else {
 			return errors.Errorf("unknown time format for stop_time: %s", r.StopTime)
 		}
@@ -384,7 +386,20 @@ func (r *GoApplyBinlog) buildMysqlCliOptions() error {
 	if mysqlOpt.MaxAllowedPacket > 0 {
 		r.TgtInstance.Options += fmt.Sprintf(" --max-allowed-packet=%d", mysqlOpt.MaxAllowedPacket)
 	}
-	mysqlClient := r.ToolSet.MustGet(tools.ToolMysqlclient)
+
+	var mysqlClient string
+	if mysqlClient80, err := r.ToolSet.Get(tools.ToolMysqlclient80); err == nil {
+		// 需要确认 dba-toolkit 下的 mysql 8.0 客户端可以用
+		if err = mysqlcomm.MysqlCliHasOption(mysqlClient80, "--help"); err == nil {
+			mysqlClient = mysqlClient80
+		} else {
+			logger.Info("try use mysql client 8.0 got error:", err.Error())
+		}
+	}
+	if mysqlClient == "" {
+		mysqlClient = r.ToolSet.MustGet(tools.ToolMysqlclient)
+		logger.Info("fallback to system mysql client: %s", mysqlClient)
+	}
 	// mysqlOpt.BinaryMode &&
 	if mysqlcomm.MysqlCliHasOption(mysqlClient, "--binary-mode") == nil {
 		r.TgtInstance.Options += " --binary-mode"

@@ -5,9 +5,9 @@
     "conf_name_validate": 1,
     "conf_value_validate": 1,
     "value_type_strict": 1,
-    "description": "binlog_rotate.yaml",
-    "conf_type_lc": "binlog滚动与备份选项",
-    "conf_file_lc": "binlog_rotate.yaml",
+    "description": "binlog滚动与备份选项",
+    "conf_type_lc": "binlog备份配置",
+    "conf_file_lc": "binlog备份配置",
     "level_names": "plat,app,module,cluster",
     "level_versioned": ""
   },
@@ -41,9 +41,9 @@
     "conf_name_validate": 1,
     "conf_value_validate": 1,
     "value_type_strict": 1,
-    "description": "checksum.yaml",
+    "description": "checksum配置",
     "conf_type_lc": "checksum配置",
-    "conf_file_lc": "checksum.yaml",
+    "conf_file_lc": "数据校验配置",
     "level_names": "plat,app,module,cluster",
     "level_versioned": ""
   },
@@ -271,7 +271,7 @@
     "value_type_strict": 1,
     "description": "",
     "conf_type_lc": "监控配置",
-    "conf_file_lc": "",
+    "conf_file_lc": "mysql-monitor监控项",
     "level_names": "plat,app,module,cluster",
     "level_versioned": ""
   },
@@ -286,5 +286,89 @@
     "conf_file_lc": "",
     "level_names": "plat",
     "level_versioned": ""
+  },
+  {
+    "conf_type": "proxyconf",
+    "conf_file": "Spider-1",
+    "conf_name_validate": 1,
+    "conf_value_validate": 1,
+    "value_type_strict": 0,
+    "description": "Spider 1.x 接入层",
+    "conf_type_lc": "my.cnf配置",
+    "conf_file_lc": "Spider 1.x",
+    "level_names": "plat,app,module,cluster",
+    "level_versioned": "cluster"
+  },
+  {
+    "conf_type": "proxyconf",
+    "conf_file": "Spider-3",
+    "conf_name_validate": 1,
+    "conf_value_validate": 1,
+    "value_type_strict": 0,
+    "description": "Spider 3.x 接入层",
+    "conf_type_lc": "my.cnf配置",
+    "conf_file_lc": "Spider 3.x推荐版本",
+    "level_names": "plat,app,module,cluster",
+    "level_versioned": "cluster"
+  },
+  {
+    "conf_type": "proxyconf",
+    "conf_file": "Spider-3.5",
+    "conf_name_validate": 1,
+    "conf_value_validate": 1,
+    "value_type_strict": 0,
+    "description": "Spider 3.x 接入层",
+    "conf_type_lc": "my.cnf配置",
+    "conf_file_lc": "Spider 3.5.x",
+    "level_names": "plat,app,module,cluster",
+    "level_versioned": "cluster"
+  },
+  {
+    "conf_type": "proxyconf",
+    "conf_file": "Spider-3.6",
+    "conf_name_validate": 1,
+    "conf_value_validate": 1,
+    "value_type_strict": 0,
+    "description": "Spider 3.x 接入层",
+    "conf_type_lc": "my.cnf配置",
+    "conf_file_lc": "Spider 3.6.x",
+    "level_names": "plat,app,module,cluster",
+    "level_versioned": "cluster"
+  },
+  {
+    "conf_type": "proxyconf",
+    "conf_file": "Spider-3.7",
+    "conf_name_validate": 1,
+    "conf_value_validate": 1,
+    "value_type_strict": 0,
+    "description": "Spider 3.x 接入层",
+    "conf_type_lc": "my.cnf配置",
+    "conf_file_lc": "Spider 3.7.x",
+    "level_names": "plat,app,module,cluster",
+    "level_versioned": "cluster"
+  },
+  {
+    "conf_type": "proxyconf",
+    "conf_file": "Spider-3.8",
+    "conf_name_validate": 1,
+    "conf_value_validate": 1,
+    "value_type_strict": 0,
+    "description": "Spider 3.x 接入层",
+    "conf_type_lc": "my.cnf配置",
+    "conf_file_lc": "Spider 3.8.x",
+    "level_names": "plat,app,module,cluster",
+    "level_versioned": "cluster"
+  },
+  {
+    "conf_type": "proxyconf",
+    "conf_file": "Spider-4",
+    "conf_name_validate": 1,
+    "conf_value_validate": 1,
+    "value_type_strict": 0,
+    "description": "Spider 4.x 接入层",
+    "conf_type_lc": "my.cnf配置",
+    "conf_file_lc": "Spider 4.x推荐版本",
+    "level_names": "plat,app,module,cluster",
+    "level_versioned": "cluster"
   }
 ]

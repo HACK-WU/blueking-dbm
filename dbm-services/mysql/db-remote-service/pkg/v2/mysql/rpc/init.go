@@ -16,6 +16,8 @@ type MySQLRPCRequest struct {
 	Timezone       string   `form:"timezone" json:"timezone"`
 	Charset        string   `form:"charset" json:"charset"`
 	TraceId        string   `form:"trace_id" json:"trace_id"`
+	PreHookCmds    []string `form:"pre_hook_cmds" json:"pre_hook_cmds"`
+	SkipSetNames   bool     `form:"skip_set_names" json:"skip_set_names"`
 }
 
 func (c *MySQLRPCRequest) TrimSpace() {
@@ -25,11 +27,17 @@ func (c *MySQLRPCRequest) TrimSpace() {
 	}
 }
 
-type MySQLRPCResponse struct {
-	Cmd          string
-	Result       json.RawMessage //[]byte //impl.SQLResultRows
-	RowsAffected int64
-	Error        string
+type MySQLCmdRPCResponse struct {
+	Cmd          string          `json:"cmd"`
+	Result       json.RawMessage `json:"table_data"`
+	RowsAffected int64           `json:"rows_affected"`
+	Error        string          `json:"error_msg"`
+}
+
+type MySQLOneAddressRPCResponse struct {
+	Address    string                `json:"address"`
+	CmdResults []MySQLCmdRPCResponse `json:"cmd_results"`
+	Error      string                `json:"error_msg"`
 }
 
 func BuildRequestWithDefault(c *gin.Context) (*MySQLRPCRequest, error) {

@@ -41,7 +41,7 @@
         :cluster-type="DBTypes.REDIS"
         :current-spec-id-list="item.host.spec_config.id ? [item.host.spec_config.id] : []"
         field="target_spec_id"
-        label="规格"
+        :label="t('规格')"
         :machine-type="specClusterMachineMap[ClusterTypes.REDIS_INSTANCE]"
         required
         selectable
@@ -82,6 +82,8 @@
   import { type Redis } from '@services/model/ticket/ticket';
   import { getRedisMachineList } from '@services/source/redis';
 
+  import { useTicketDetail } from '@hooks';
+
   import { ClusterTypes, DBTypes, TicketTypes } from '@common/const';
 
   import { type IValue, type PanelListType } from '@components/instance-selector/Index.vue';
@@ -95,8 +97,6 @@
   import TargetVersionSelectColumn from '@views/db-manage/redis/common/toolbox-field/target-version-select-column/Index.vue';
 
   import { random } from '@utils';
-
-  import { useTicketDetail } from '@/hooks';
 
   import OldMasterSlaveHostColumn from '../OldMasterSlaveHostColumn.vue';
 

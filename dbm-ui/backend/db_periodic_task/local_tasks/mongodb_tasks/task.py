@@ -13,8 +13,10 @@ from celery.schedules import crontab
 from backend.db_periodic_task.local_tasks.register import register_periodic_task
 from backend.db_report.repo.task_record_repo import TaskRecordRepo
 
+from .check_affinity import CheckMongodbAffinityTask
 from .check_backup import CheckMongoBackupRecordTask
 from .check_exporter import CheckMongodbUpMetricTask
+from .sync_instance_status import SyncStorageInstanceStatusTask
 
 """
     register_periodic_task 注册新的周期任务注意
@@ -49,3 +51,25 @@ def mongodb_metric_check_task():
         task_type="exporter",
         check_task_instance=CheckMongodbUpMetricTask(),
     )
+
+
+@register_periodic_task(run_every=crontab(minute=0, hour=7))
+def mongodb_affinity_check_task():
+    """
+    mongodb 亲和性巡检
+    """
+    repo = TaskRecordRepo()
+    repo.execute_task_with_record(
+        db_type="mongodb",
+        task_name="mongodb_affinity_check_task",
+        task_type="affinity",
+        check_task_instance=CheckMongodbAffinityTask(),
+    )
+
+
+@register_periodic_task(run_every=crontab(minute="*/2"))
+def mongodb_sync_instance_status_task():
+    """
+    mongodb 实例状态同步
+    """
+    SyncStorageInstanceStatusTask().start()

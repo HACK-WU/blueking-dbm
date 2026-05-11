@@ -78,6 +78,21 @@ def generate_autofix_ticket(fault_clusters: QuerySet):
             cluster.save(update_fields=["status_version", "deal_status", "update_at"])
             continue
 
+        # 如果已经创建了单据，则本次忽略，避免重复提单（实时从DB读取，避免内存缓存）
+        # 建议：select_for_update 强一致校验
+        from django.db import transaction
+
+        with transaction.atomic():
+            cluster_locked = RedisAutofixCore.objects.select_for_update().get(id=cluster.id)
+            if cluster_locked.ticket_id and cluster_locked.ticket_id > 0:
+                logger.info(
+                    "cluster_autofix skip duplicate, {} ticket_id={}".format(
+                        cluster.immute_domain, cluster_locked.ticket_id
+                    )
+                )
+                continue
+            # 在锁内创建单据
+
         generate_single_autofix_ticket(cluster)
 
 
@@ -242,7 +257,7 @@ def generate_single_autofix_ticket(cluster: RedisAutofixCore):
             create_ticket(cluster, cluster_ids, redis_proxies, [], InstanceRole.REDIS_PROXY.value)
     except Exception as e:
         logger.error("create autofix ticket for cluster {} , failed : {}".format(cluster.immute_domain, e))
-        cluster.status_version = "create ticket failed by : {}".format(e)
+        cluster.status_version = "create ticket failed by : {}".format(str(e)[:30])
         cluster.update_at = datetime2str(datetime.datetime.now(timezone.utc))
         cluster.deal_status = AutofixStatus.AF_FAIL.value
         cluster.save(update_fields=["status_version", "deal_status", "update_at"])
@@ -289,6 +304,7 @@ def create_ticket(
         # 如果不存在，则取默认值
         redisDBA = DBAdministrator.objects.get(bk_biz_id=0, db_type=DBType.Redis.value)
 
+    cluster.update_at = datetime2str(datetime.datetime.now(timezone.utc))
     # 初始化builder类
     try:
         ticket = Ticket.create_ticket(
@@ -304,6 +320,10 @@ def create_ticket(
         cluster.status_version = get_random_string(12)
         cluster.deal_status = AutofixStatus.AF_WFLOW.value
 
+        # 更新DB状态
+        cluster.save(update_fields=["ticket_id", "status_version", "deal_status", "update_at"])
+        logger.info("create ticket for cluster {}, details : {}".format(cluster.immute_domain, details))
+
         msgs, title = {}, _("{} - 发起自愈".format(cluster.immute_domain))
         msgs[_("BKID")] = cluster.bk_biz_id
         msgs[_("流程ID")] = ticket.id
@@ -313,13 +333,10 @@ def create_ticket(
         send_msg_2_qywx(title, msgs)
     except Exception as e:
         cluster.deal_status = AutofixStatus.AF_FAIL.value
-        cluster.status_version = str(e)
+        cluster.status_version = str(e)[:50]
+        cluster.save(update_fields=["status_version", "deal_status", "update_at"])
         logger.error(
             "create ticket for cluster {} failed, details : {}::{}".format(
                 cluster.immute_domain, details, traceback.format_exc()
             )
         )
-
-    logger.info("create ticket for cluster {} failed, details : {}".format(cluster.immute_domain, details))
-    cluster.update_at = datetime2str(datetime.datetime.now(timezone.utc))
-    cluster.save(update_fields=["ticket_id", "status_version", "deal_status", "update_at"])

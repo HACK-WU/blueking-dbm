@@ -5,7 +5,11 @@
       closable
       :title="t('外部主机导入资源池后将在此被记录。直至在待回收池完成删除操作，相关记录才会被删除')" />
     <div class="operation-wrapper">
-      <BkDropdown>
+      <BkDropdown
+        :popover-options="{
+          clickContentAutoHide: true,
+        }"
+        trigger="click">
         <BkButton>
           {{ t('复制') }}
           <DbIcon
@@ -77,6 +81,9 @@
         :filter="columnFilter?.os_name"
         :title="t('操作系统')"
         :width="180">
+        <template #default="{ row }: { row: FaultOrRecycleMachineModel }">
+          {{ row.os_name || '--' }}
+        </template>
       </TableColumn>
       <TableColumn
         col-key="device_class"
@@ -90,13 +97,8 @@
       </TableColumn>
       <TableColumn
         col-key="bkMemText"
-        show-overflow
-        :title="t('内存')"
-        :width="80">
-        <template #default="{ row }: { row: FaultOrRecycleMachineModel }">
-          {{ row.bkMemText || '0 M' }}
-        </template>
-      </TableColumn>
+        :min-width="90"
+        :title="t('内存（G）')" />
       <TableColumn
         col-key="bk_disk"
         :title="t('磁盘 (G)')">

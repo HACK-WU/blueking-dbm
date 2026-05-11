@@ -9,15 +9,16 @@
 package slavestatus
 
 import (
-	"dbm-services/mysql/db-tools/mysql-crond/pkg/third_party/instance_info_updater"
-	"dbm-services/mysql/db-tools/mysql-monitor/pkg/config"
-	"dbm-services/mysql/db-tools/mysql-monitor/pkg/itemscollect/update_monitor_config"
 	"fmt"
 	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"dbm-services/mysql/db-tools/mysql-crond/pkg/third_party/instance_info_updater"
+	"dbm-services/mysql/db-tools/mysql-monitor/pkg/config"
+	"dbm-services/mysql/db-tools/mysql-monitor/pkg/itemscollect/update_monitor_config"
 
 	"dbm-services/mysql/db-tools/mysql-monitor/pkg/monitoriteminterface"
 
@@ -118,14 +119,27 @@ func (s *slaveStatusChecker) skipErr() error {
 
 	if s.isOk() {
 		return nil
-	} else {
-		return errors.Errorf("err still stay after skip")
 	}
+
+	return errors.Errorf("err still stay after skip")
 }
 
 func (s *slaveStatusChecker) isOk() bool {
-	return strings.ToUpper(s.slaveStatus["Slave_IO_Running"].(string)) == "YES" &&
-		strings.ToUpper(s.slaveStatus["Slave_SQL_Running"].(string)) == "YES"
+	ioRunning, ok1 := s.getStringValue("Slave_IO_Running")
+	sqlRunning, ok2 := s.getStringValue("Slave_SQL_Running")
+	if !ok1 || !ok2 {
+		return false
+	}
+	return strings.ToUpper(ioRunning) == "YES" && strings.ToUpper(sqlRunning) == "YES"
+}
+
+func (s *slaveStatusChecker) getStringValue(key string) (string, bool) {
+	val, exists := s.slaveStatus[key]
+	if !exists {
+		return "", false
+	}
+	str, ok := val.(string)
+	return str, ok
 }
 
 func (s *slaveStatusChecker) masterHost() string {
@@ -226,6 +240,7 @@ func (s *slaveStatusChecker) isDBHASwitched() bool {
 		slog.Error("is dbha switch", slog.String("error", err.Error()))
 		return false
 	}
+	slog.Info("update instance info recreate file success")
 
 	monitorConfigUpdater := update_monitor_config.Checker{}
 	ssi, err := monitorConfigUpdater.GetSelfInfoStorage()

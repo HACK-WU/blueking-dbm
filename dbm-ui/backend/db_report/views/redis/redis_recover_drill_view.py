@@ -9,14 +9,12 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-import functools
 import logging
 
 from django.utils.translation import gettext as _
 from rest_framework import serializers
 
-from backend.configuration.constants import DBType, SystemSettingsEnum
-from backend.configuration.models import SystemSettings
+from backend.configuration.constants import DBType
 from backend.db_report.enums import DrillFilterType, RedisRollbackExerciseTaskStage, ReportFieldFormat
 from backend.db_report.models import RedisRollbackExerciseReport
 from backend.db_report.register import register_drill_report
@@ -36,12 +34,6 @@ class RedisRecoverDrillTaskSerializer(serializers.ModelSerializer, ReportCommonF
     delete_flow_link = serializers.SerializerMethodField(help_text=_("销毁流程链接"))
     ticket_link = serializers.SerializerMethodField(help_text=_("单据链接"))
 
-    @staticmethod
-    @functools.lru_cache(maxsize=1)
-    def _get_biz_id():
-        """Lazy load biz_id to avoid database calls at import time"""
-        return SystemSettings.get_setting_value(key=SystemSettingsEnum.REDIS_ROLLBACK_EXERCISE).get("bk_biz_id")
-
     def get_instance(self, obj):
         """Combine ip:port as instance"""
         if obj.instance_ip and obj.instance_port:
@@ -52,22 +44,20 @@ class RedisRecoverDrillTaskSerializer(serializers.ModelSerializer, ReportCommonF
         """Calculate recovery duration in minutes"""
         if obj.recover_start_time and obj.recover_end_time:
             duration = obj.recover_end_time - obj.recover_start_time
-            return round(duration.total_seconds() / 60, 2)  # Convert to minutes, keep 2 decimal places
+            return round(duration.total_seconds() / 60, 2)
         return None
 
     def get_rollback_flow_link(self, obj):
         """Generate rollback flow link"""
-        if not obj.rollback_flow_obj_id:
+        if not obj.rollback_flow_obj_id or not obj.bk_biz_id:
             return None
-        biz_id = self._get_biz_id()
-        return f"{BK_SAAS_HOST}/{biz_id}/task-history/detail/{obj.rollback_flow_obj_id}?from=taskHistoryList"
+        return f"{BK_SAAS_HOST}/{obj.bk_biz_id}/task-history/detail/{obj.rollback_flow_obj_id}?from=taskHistoryList"
 
     def get_delete_flow_link(self, obj):
         """Generate delete flow link"""
-        if not obj.delete_flow_obj_id:
+        if not obj.delete_flow_obj_id or not obj.bk_biz_id:
             return None
-        biz_id = self._get_biz_id()
-        return f"{BK_SAAS_HOST}/{biz_id}/task-history/detail/{obj.delete_flow_obj_id}?from=taskHistoryList"
+        return f"{BK_SAAS_HOST}/{obj.bk_biz_id}/task-history/detail/{obj.delete_flow_obj_id}?from=taskHistoryList"
 
     def get_ticket_link(self, obj):
         """Generate ticket link"""
@@ -104,11 +94,10 @@ class RedisRecoverDrillTaskViewSet(RecoverDrillTaskViewSet):
             RedisRollbackExerciseTaskStage.DONE,
             RedisRollbackExerciseTaskStage.TICKET_GEN_FAILED,
             RedisRollbackExerciseTaskStage.RESOURCE_APPLI_FAILED,
-            RedisRollbackExerciseTaskStage.ROLLBACK_FLOW_GEN_FAILED,
             RedisRollbackExerciseTaskStage.ROLLBACK_FAILED,
-            RedisRollbackExerciseTaskStage.DELETE_FLOW_GEN_FAILED,
-            RedisRollbackExerciseTaskStage.DELETE_FAILED,
+            RedisRollbackExerciseTaskStage.CLEANUP_FAILED,
             RedisRollbackExerciseTaskStage.SKIPPED,
+            RedisRollbackExerciseTaskStage.BACKUP_INVALID,
         ]
     ).order_by("-update_at")
     serializer_class = RedisRecoverDrillTaskSerializer
@@ -121,7 +110,7 @@ class RedisRecoverDrillTaskViewSet(RecoverDrillTaskViewSet):
         "state": ["exact", "in"],
         "create_at": ["gte", "lte"],
     }
-    ordering_fields = ["recover_start_time", "recover_duration"]
+    ordering_fields = ["recover_start_time"]
 
     report_title = [
         {

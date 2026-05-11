@@ -10,57 +10,76 @@ specific language governing permissions and limitations under the License.
 """
 import logging
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.utils.translation import gettext_lazy as _
 from rest_framework.response import Response
 
-from backend.db_meta.enums import ClusterType
-from backend.dbm_aiagent.mcp_tools.constants import DBMAMcpTools, DBMMCPTags
+from backend.db_meta.enums import MachineType
+from backend.db_meta.models import Cluster, Machine
+from backend.dbm_aiagent.mcp_tools.common.auth_parser.base import (
+    auth_parse_bizs,
+    auth_parse_clusters,
+    auth_parse_instances,
+)
+from backend.dbm_aiagent.mcp_tools.constants import DBMMCPTags, DBMMcpTools
 from backend.dbm_aiagent.mcp_tools.decorators import mcp_tools_api_decorator
+from backend.dbm_aiagent.mcp_tools.exceptions import DBMMcpNotSupportMachineTypeException
 from backend.dbm_aiagent.mcp_tools.mysql.impl.cluster_topo import mysql_cluster_topo
 from backend.dbm_aiagent.mcp_tools.mysql.impl.explain_sql import explain_sql
+from backend.dbm_aiagent.mcp_tools.mysql.impl.query_trx import query_long_running_trx
+from backend.dbm_aiagent.mcp_tools.mysql.impl.show_binlog_events import show_binlog_events as run_show_binlog_events
 from backend.dbm_aiagent.mcp_tools.mysql.impl.show_create_table import show_create_table
+from backend.dbm_aiagent.mcp_tools.mysql.impl.show_engine_status import show_engine_status
 from backend.dbm_aiagent.mcp_tools.mysql.impl.show_priv_template import show_biz_mysql_privilege_template
-from backend.dbm_aiagent.mcp_tools.mysql.impl.show_processlist import (
-    show_cluster_processlist_count,
-    show_instances_processlist_detail,
-)
+from backend.dbm_aiagent.mcp_tools.mysql.impl.show_processlist import show_mysql_processlist, show_proxy_processlist
 from backend.dbm_aiagent.mcp_tools.mysql.impl.show_status import mysql_show_slave_status, show_instance_status
-from backend.dbm_aiagent.mcp_tools.mysql.impl.show_variables import show_mysql_variables
+from backend.dbm_aiagent.mcp_tools.mysql.impl.show_variables import show_instance_variables
 from backend.dbm_aiagent.mcp_tools.mysql.serializers.cluster_topo import (
-    ClusterTopoInputSerializer,
-    TenDBClusterTopoOutputSerializer,
-    TenDBHATopoOutputSerializer,
-    TenDBSingleTopoOutputSerializer,
+    MySQLClusterTopoInputSerializer,
+    MySQLClusterTopoOutputSerializer,
 )
 from backend.dbm_aiagent.mcp_tools.mysql.serializers.explain_sql import (
     ExplainSQLInputSerializer,
     ExplainSQLOutputSerializer,
 )
+from backend.dbm_aiagent.mcp_tools.mysql.serializers.query_trx import QueryLongRunningTrxOutputSerializer
+from backend.dbm_aiagent.mcp_tools.mysql.serializers.show_binlog_events import (
+    ShowBinlogEventsInputSerializer,
+    ShowBinlogEventsOutputSerializer,
+)
 from backend.dbm_aiagent.mcp_tools.mysql.serializers.show_create_table import (
     ShowCreateTableInputSerializer,
     ShowCreateTableOutputSerializer,
+    ShowCreateTablesInputSerializer,
+    ShowCreateTablesOutputSerializer,
+)
+from backend.dbm_aiagent.mcp_tools.mysql.serializers.show_engine_status import (
+    ShowInstanceEngineStatusInputSerializer,
+    ShowInstanceEngineStatusOutputSerializer,
 )
 from backend.dbm_aiagent.mcp_tools.mysql.serializers.show_priv_template import (
     ShowBizMySQLPrivilegeTemplateInputSerializer,
     ShowBizMySQLPrivilegeTemplateOutputSerializer,
 )
 from backend.dbm_aiagent.mcp_tools.mysql.serializers.show_processlist import (
-    ShowClusterProcessListCountInputSerializer,
-    ShowClusterProcessListCountOutputSerializer,
-    ShowInstanceProcessListDetailInputSerializer,
-    ShowInstanceProcessListDetailOutputSerializer,
+    ShowInstanceProcessListInputSerializer,
+    ShowMySQLInstanceProcessListOutputSerializer,
+    ShowProxyProcessListOutputSerializer,
 )
 from backend.dbm_aiagent.mcp_tools.mysql.serializers.show_status import (
     ShowInstanceSlaveStatusInputSerializer,
     ShowInstanceStatuesOutputSerializer,
     ShowInstanceStatusesInputSerializer,
+    ShowStatusNamesInputSerializer,
 )
 from backend.dbm_aiagent.mcp_tools.mysql.serializers.show_variables import (
-    ShowMySQLVariablesInputSerializer,
-    ShowMySQLVariablesOutputSerializer,
+    ShowInstanceVariablesInputSerializer,
+    ShowInstanceVariablesOutputSerializer,
+    ShowVariablesNamesInputSerializer,
 )
 from backend.dbm_aiagent.mcp_tools.views import McpToolsViewSet
 from backend.iam_app.handlers.drf_perm.base import DBManagePermission
+from backend.iam_app.handlers.drf_perm.mcp import McpClusterDetailPermission, McpIsDbaPermission
 
 logger = logging.getLogger("root")
 
@@ -72,194 +91,185 @@ class MySQLQueryMcpToolsViewSet(McpToolsViewSet):
         description=str(_("获取 tendbsingle, tendbha, tendbcluster 集群的表结构")),
         request_slz=ShowCreateTableInputSerializer,
         response_slz=ShowCreateTableOutputSerializer,
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_clusters,
         tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.MYSQL_QUERY],
+        mcp=[DBMMcpTools.MYSQL_QUERY, DBMMcpTools.MYSQL_SLOWLOG],
         name_prefix="mysql_query",
     )
     def show_create_table(self, request, *args, **kwargs):
-        bk_biz_id = self.get_param("bk_biz_id")  # noqa: F841
-        cluster_type = self.get_param("cluster_type")
         cluster_domain = self.get_param("cluster_domain")
-        dbname = self.get_param("dbname")
-        tablename = self.get_param("tablename")
+        db_name = self.get_param("db_name")
+        table_name = self.get_param("table_name")
+
+        cluster_obj = Cluster.objects.get(immute_domain=cluster_domain)
 
         return Response(
             show_create_table(
-                cluster_type=cluster_type, cluster_domain=cluster_domain, dbname=dbname, tablename=tablename
+                cluster_type=cluster_obj.cluster_type,
+                cluster_domain=cluster_domain,
+                dbname=db_name,
+                tablename=table_name,
             )
         )
+
+    @mcp_tools_api_decorator(
+        description=str(_("获取 tendbsingle, tendbha, tendbcluster 集群的表结构，可同时获取多个表的结构")),
+        request_slz=ShowCreateTablesInputSerializer,
+        response_slz=ShowCreateTablesOutputSerializer,
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_clusters,
+        tags=[DBMMCPTags.READ],
+        mcp=[DBMMcpTools.MYSQL_QUERY, DBMMcpTools.MYSQL_SLOWLOG],
+        name_prefix="mysql_query",
+    )
+    def show_create_tables(self, request, *args, **kwargs):
+        cluster_domain = self.get_param("cluster_domain")
+        table_names = self.get_param("table_names")
+
+        cluster_obj = Cluster.objects.get(immute_domain=cluster_domain)
+        create_sql_list = []
+        for table_name in table_names:
+            create_sql = show_create_table(
+                cluster_type=cluster_obj.cluster_type,
+                cluster_domain=cluster_domain,
+                dbname="",
+                tablename=table_name,
+            )
+            create_sql_list.append(
+                {
+                    "table_name": table_name,
+                    "create_sql": create_sql,
+                }
+            )
+
+        return Response(create_sql_list)
 
     @mcp_tools_api_decorator(
         description=str(_("查询 SQL 执行计划")),
         request_slz=ExplainSQLInputSerializer,
         response_slz=ExplainSQLOutputSerializer,
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_clusters,
         tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.MYSQL_QUERY],
+        mcp=[DBMMcpTools.MYSQL_QUERY, DBMMcpTools.MYSQL_SLOWLOG],
         name_prefix="mysql_query",
     )
     def explain_sql(self, request, *args, **kwargs):
-        bk_biz_id = self.get_param("bk_biz_id")  # noqa: F841
-        cluster_type = self.get_param("cluster_type")
         cluster_domain = self.get_param("cluster_domain")
-        dbname = self.get_param("dbname")
+        db_name = self.get_param("db_name")
         query_sql = self.get_param("query_sql")
 
+        cluster_obj = Cluster.objects.get(immute_domain=cluster_domain)
+
         return Response(
-            explain_sql(cluster_type=cluster_type, cluster_domain=cluster_domain, dbname=dbname, query_sql=query_sql)
+            explain_sql(
+                cluster_type=cluster_obj.cluster_type,
+                cluster_domain=cluster_domain,
+                dbname=db_name,
+                query_sql=query_sql,
+            )
         )
 
     @mcp_tools_api_decorator(
-        description=str(_("查询 TenDBSingle 集群拓扑结构")),
-        request_slz=ClusterTopoInputSerializer,
-        response_slz=TenDBSingleTopoOutputSerializer,
+        description=str(_("查询 TenDBSingle, TenDBHA, TenDBCluster 集群拓扑结构")),
+        request_slz=MySQLClusterTopoInputSerializer,
+        response_slz=MySQLClusterTopoOutputSerializer,
         tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.MYSQL_QUERY],
+        mcp=[DBMMcpTools.MYSQL_QUERY],
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_clusters,
         name_prefix="mysql_query",
     )
-    def tendbsingle_topo(self, request, *args, **kwargs):
-        bk_biz_id = self.get_param("bk_biz_id")  # noqa: F841
+    def mysql_cluster_topo(self, request, *args, **kwargs):
         cluster_domain = self.get_param("cluster_domain")
 
-        return Response(mysql_cluster_topo(cluster_type=ClusterType.TenDBSingle, cluster_domain=cluster_domain))
+        cluster_obj = Cluster.objects.get(immute_domain=cluster_domain)
 
-    @mcp_tools_api_decorator(
-        description=str(_("查询 TenDBHA 集群拓扑结构")),
-        request_slz=ClusterTopoInputSerializer,
-        response_slz=TenDBHATopoOutputSerializer,
-        tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.MYSQL_QUERY],
-        name_prefix="mysql_query",
-    )
-    def tendbha_topo(self, request, *args, **kwargs):
-        bk_biz_id = self.get_param("bk_biz_id")  # noqa: F841
-        cluster_domain = self.get_param("cluster_domain")
-
-        return Response(mysql_cluster_topo(cluster_type=ClusterType.TenDBHA, cluster_domain=cluster_domain))
-
-    @mcp_tools_api_decorator(
-        description=str(_("查询 TenDBCluster 集群拓扑结构")),
-        request_slz=ClusterTopoInputSerializer,
-        response_slz=TenDBClusterTopoOutputSerializer,
-        tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.MYSQL_QUERY],
-        name_prefix="mysql_query",
-    )
-    def tendbcluster_topo(self, request, *args, **kwargs):
-        bk_biz_id = self.get_param("bk_biz_id")  # noqa: F841
-        cluster_domain = self.get_param("cluster_domain")
-
-        return Response(mysql_cluster_topo(cluster_type=ClusterType.TenDBCluster, cluster_domain=cluster_domain))
-
-    @mcp_tools_api_decorator(
-        description=str(_("""查询实例连接详情""")),
-        request_slz=ShowInstanceProcessListDetailInputSerializer,
-        response_slz=ShowInstanceProcessListDetailOutputSerializer,
-        tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.MYSQL_QUERY],
-        name_prefix="mysql_query",
-    )
-    def show_instance_processlist_detail(self, request, *args, **kwargs):
-        bk_biz_id = self.get_param("bk_biz_id")
-        bk_cloud_id = self.get_param("bk_cloud_id")
-        instances = self.get_param("instances")
-
-        res = show_instances_processlist_detail(bk_cloud_id, instances)
         return Response(
             {
-                "instance_processlist_info": res,
-                "bk_biz_id": bk_biz_id,
+                "bk_cloud_id": cluster_obj.bk_cloud_id,
+                "bk_biz_id": cluster_obj.bk_biz_id,
+                "region": cluster_obj.region,
+                "tolerance_level": cluster_obj.disaster_tolerance_level,
+                "time_zone": cluster_obj.time_zone,
+                **mysql_cluster_topo(cluster_obj=cluster_obj),
             }
         )
 
     @mcp_tools_api_decorator(
-        description=str(_("""查询集群连接数""")),
-        request_slz=ShowClusterProcessListCountInputSerializer,
-        response_slz=ShowClusterProcessListCountOutputSerializer,
+        description=str(_("""查询实例运行时参数, 执行 show global variables，返回所有变量""")),
+        request_slz=ShowInstanceVariablesInputSerializer,
+        response_slz=ShowInstanceVariablesOutputSerializer,
         tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.MYSQL_QUERY],
+        mcp=[DBMMcpTools.MYSQL_QUERY],
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_instances,
         name_prefix="mysql_query",
     )
-    def show_cluster_processlist_count(self, request, *args, **kwargs):
-        bk_biz_id = self.get_param("bk_biz_id")
-        cluster_type = self.get_param("cluster_type")
-        cluster_domain = self.get_param("cluster_domain")
-
-        res = show_cluster_processlist_count(cluster_type, cluster_domain)
-        return Response(
-            {
-                "cluster_process_list_info": res,
-                "bk_biz_id": bk_biz_id,
-                "cluster_type": cluster_type,
-                "cluster_domain": cluster_domain,
-            }
-        )
-
-    @mcp_tools_api_decorator(
-        description=str(_("""查询 MySQL 常见运行时参数""")),
-        request_slz=ShowMySQLVariablesInputSerializer,
-        response_slz=ShowMySQLVariablesOutputSerializer,
-        tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.MYSQL_QUERY],
-        name_prefix="mysql_query",
-    )
-    def show_mysql_popular_runtime_variables(self, request, *args, **kwargs):
+    def show_instance_runtime_variables(self, request, *args, **kwargs):
         bk_cloud_id = self.get_param("bk_cloud_id")
-        bk_biz_id = self.get_param("bk_biz_id")
         address = self.get_param("address")
-        machine_type = self.get_param("machine_type")
-        variable_hints = self.get_param("variable_hints")
+
+        machine_obj = _validate_and_get_machine(bk_cloud_id, address)
 
         return Response(
             {
-                **show_mysql_variables(
-                    bk_cloud_id=bk_cloud_id, address=address, machine_type=machine_type, variable_hints=variable_hints
+                **show_instance_variables(
+                    bk_cloud_id=machine_obj.bk_cloud_id,
+                    address=address,
+                    machine_type=machine_obj.machine_type,
+                    names=[],
                 ),
-                "bk_biz_id": bk_biz_id,
             }
         )
 
     @mcp_tools_api_decorator(
-        description=str(_("""查询实例常见运行时状态""")),
+        description=str(_("""查询实例运行时状态, 执行 show global status，返回所有值""")),
         request_slz=ShowInstanceStatusesInputSerializer,
         response_slz=ShowInstanceStatuesOutputSerializer,
         tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.MYSQL_QUERY],
+        mcp=[DBMMcpTools.MYSQL_QUERY],
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_instances,
         name_prefix="mysql_query",
     )
-    def show_instance_popular_runtime_status(self, request, *args, **kwargs):
+    def show_instance_runtime_status(self, request, *args, **kwargs):
         bk_cloud_id = self.get_param("bk_cloud_id")
-        bk_biz_id = self.get_param("bk_biz_id")
         address = self.get_param("address")
-        machine_type = self.get_param("machine_type")
-        status_hints = self.get_param("status_hints")
+
+        machine_obj = _validate_and_get_machine(bk_cloud_id, address)
 
         return Response(
             {
                 **show_instance_status(
-                    bk_cloud_id=bk_cloud_id, address=address, machine_type=machine_type, status_hints=status_hints
+                    bk_cloud_id=machine_obj.bk_cloud_id,
+                    address=address,
+                    machine_type=machine_obj.machine_type,
+                    names=[],
                 ),
-                "bk_biz_id": bk_biz_id,
             }
         )
 
     @mcp_tools_api_decorator(
-        description=str(_("""查询实例同步状态状态""")),
+        description=str(_("""查询实例主从同步状态, 执行 show slave status""")),
         request_slz=ShowInstanceSlaveStatusInputSerializer,
         response_slz=ShowInstanceStatuesOutputSerializer,
         tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.MYSQL_QUERY],
+        mcp=[DBMMcpTools.MYSQL_QUERY],
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_instances,
         name_prefix="mysql_query",
     )
     def show_instance_slave_status(self, request, *args, **kwargs):
         bk_cloud_id = self.get_param("bk_cloud_id")
-        bk_biz_id = self.get_param("bk_biz_id")
         address = self.get_param("address")
+
+        machine_obj = _validate_and_get_machine(bk_cloud_id, address)
 
         return Response(
             {
-                "address": address,
-                "runtime_status": mysql_show_slave_status(bk_cloud_id=bk_cloud_id, address=address),
-                "bk_biz_id": bk_biz_id,
+                "runtime_statuses": mysql_show_slave_status(bk_cloud_id=machine_obj.bk_cloud_id, address=address),
             }
         )
 
@@ -268,7 +278,9 @@ class MySQLQueryMcpToolsViewSet(McpToolsViewSet):
         request_slz=ShowBizMySQLPrivilegeTemplateInputSerializer,
         response_slz=ShowBizMySQLPrivilegeTemplateOutputSerializer,
         tags=[DBMMCPTags.READ],
-        mcp=[DBMAMcpTools.MYSQL_QUERY],
+        mcp=[DBMMcpTools.MYSQL_QUERY],
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_bizs,
         name_prefix="mysql_query",
     )
     def show_biz_mysql_privilege_template(self, request, *args, **kwargs):
@@ -280,7 +292,230 @@ class MySQLQueryMcpToolsViewSet(McpToolsViewSet):
                 "privilege_templates": show_biz_mysql_privilege_template(
                     bk_biz_id=bk_biz_id, cluster_type=cluster_type
                 ),
-                "bk_biz_id": bk_biz_id,
-                "cluster_type": cluster_type,
             }
         )
+
+    @mcp_tools_api_decorator(
+        description=str(_("查询 MySQL 实例进程列表，返回原始 processlist 信息.")),
+        request_slz=ShowInstanceProcessListInputSerializer,
+        response_slz=ShowMySQLInstanceProcessListOutputSerializer,
+        tags=[DBMMCPTags.READ],
+        mcp=[DBMMcpTools.MYSQL_QUERY, DBMMcpTools.MYSQL_METRICS],
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_instances,
+        name_prefix="mysql_query",
+    )
+    def show_mysql_processlist(self, request, *args, **kwargs):
+        bk_cloud_id = self.get_param("bk_cloud_id")
+        address = self.get_param("address")
+
+        machine_obj = _validate_and_get_machine(bk_cloud_id, address)
+
+        return Response(
+            {
+                "processlist": show_mysql_processlist(
+                    bk_cloud_id=machine_obj.bk_cloud_id,
+                    address=address,
+                    # machine_type=machine_obj.machine_type,
+                ),
+            }
+        )
+
+    @mcp_tools_api_decorator(
+        description=str(_("查询 mysql-proxy 即 Proxy 进程列表，返回原始 processlist 信息")),
+        request_slz=ShowInstanceProcessListInputSerializer,
+        response_slz=ShowProxyProcessListOutputSerializer,
+        tags=[DBMMCPTags.READ],
+        mcp=[DBMMcpTools.MYSQL_QUERY, DBMMcpTools.MYSQL_METRICS],
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_instances,
+        name_prefix="mysql_query",
+    )
+    def show_proxy_processlist(self, request, *args, **kwargs):
+        bk_cloud_id = self.get_param("bk_cloud_id")
+        address = self.get_param("address")
+
+        machine_obj = _validate_and_get_machine(bk_cloud_id, address)
+
+        return Response(
+            {
+                "processlist": show_proxy_processlist(
+                    bk_cloud_id=machine_obj.bk_cloud_id,
+                    address=address,
+                ),
+            }
+        )
+
+    @mcp_tools_api_decorator(
+        description=str(_("查询 mysql 长事务，事务未关闭，当前可能正在执行 SQL，也可能 Sleep 未提交")),
+        request_slz=ShowInstanceProcessListInputSerializer,
+        response_slz=QueryLongRunningTrxOutputSerializer,
+        tags=[DBMMCPTags.READ],
+        mcp=[DBMMcpTools.MYSQL_QUERY],
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_instances,
+        name_prefix="mysql_query",
+    )
+    def trx_long_running(self, request, *args, **kwargs):
+        bk_cloud_id = self.get_param("bk_cloud_id")
+        address = self.get_param("address")
+
+        machine_obj = _validate_and_get_machine(bk_cloud_id, address)
+
+        return Response(
+            {
+                "long_running_trx": query_long_running_trx(
+                    bk_cloud_id=machine_obj.bk_cloud_id,
+                    address=address,
+                ),
+            }
+        )
+
+    @mcp_tools_api_decorator(
+        description=str(
+            _(
+                """查询指定的 MySQL 参数,
+        执行 show global variables where Variable_name in.
+        variable_names 参数值大小写敏感, 不会对 variable_names 存在性校验, 非法值不会返回对应的结果"""
+            )
+        ),
+        request_slz=ShowVariablesNamesInputSerializer,
+        response_slz=ShowInstanceVariablesOutputSerializer,
+        tags=[DBMMCPTags.READ],
+        mcp=[DBMMcpTools.MYSQL_QUERY],
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_instances,
+        name_prefix="mysql_query",
+    )
+    def show_global_variables_with_names(self, request, *args, **kwargs):
+        bk_cloud_id = self.get_param("bk_cloud_id")
+        address = self.get_param("address")
+        names = self.get_param("variable_names")
+
+        machine_obj = _validate_and_get_machine(bk_cloud_id, address)
+
+        return Response(
+            {
+                **show_instance_variables(
+                    bk_cloud_id=machine_obj.bk_cloud_id,
+                    address=address,
+                    machine_type=machine_obj.machine_type,
+                    names=names,
+                ),
+            }
+        )
+
+    @mcp_tools_api_decorator(
+        description=str(
+            _(
+                """查询指定名字 mysql 实例状态值,
+        执行 show global status where Variable_name in.
+        status_names 参数值大小写敏感, 不会对 status_names 存在性校验, 非法值不会返回对应的结果"""
+            )
+        ),
+        request_slz=ShowStatusNamesInputSerializer,
+        response_slz=ShowInstanceStatuesOutputSerializer,
+        tags=[DBMMCPTags.READ],
+        mcp=[DBMMcpTools.MYSQL_QUERY],
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_instances,
+        name_prefix="mysql_query",
+    )
+    def show_global_status_with_names(self, request, *args, **kwargs):
+        bk_cloud_id = self.get_param("bk_cloud_id")
+        address = self.get_param("address")
+        names = self.get_param("status_names")
+
+        machine_obj = _validate_and_get_machine(bk_cloud_id, address)
+
+        return Response(
+            {
+                **show_instance_status(
+                    bk_cloud_id=machine_obj.bk_cloud_id,
+                    address=address,
+                    machine_type=machine_obj.machine_type,
+                    names=names,
+                ),
+            }
+        )
+
+    @mcp_tools_api_decorator(
+        description=str(_("""查询实例特定引擎状态""")),
+        request_slz=ShowInstanceEngineStatusInputSerializer,
+        response_slz=ShowInstanceEngineStatusOutputSerializer,
+        tags=[DBMMCPTags.READ],
+        mcp=[DBMMcpTools.MYSQL_QUERY],
+        permission_classes=[McpClusterDetailPermission],
+        mcp_auth_parser=auth_parse_instances,
+        name_prefix="mysql_query",
+    )
+    def show_instance_engine_status(self, request, *args, **kwargs):
+        bk_cloud_id = self.get_param("bk_cloud_id")
+        address = self.get_param("address")
+        engine = self.get_param("engine")
+
+        machine_obj = _validate_and_get_machine(bk_cloud_id, address)
+        return Response(show_engine_status(bk_cloud_id, address, engine, machine_obj.machine_type))
+
+    @mcp_tools_api_decorator(
+        description=str(
+            _(
+                """在实例上执行 SHOW BINLOG EVENTS, 支持可选的 IN 日志名、FROM 位点、LIMIT; """
+                """limit 行数最大 100(由 limit_row_count 指定, 与可选的 limit_offset 共同组成 LIMIT)"""
+            )
+        ),
+        request_slz=ShowBinlogEventsInputSerializer,
+        response_slz=ShowBinlogEventsOutputSerializer,
+        tags=[DBMMCPTags.READ],
+        mcp=[DBMMcpTools.MYSQL_QUERY],
+        permission_classes=[McpClusterDetailPermission, McpIsDbaPermission],
+        mcp_auth_parser=auth_parse_instances,
+        name_prefix="mysql_query",
+    )
+    def show_binlog_events(self, request, *args, **kwargs):
+        bk_cloud_id = self.get_param("bk_cloud_id")
+        address = self.get_param("address")
+        log_name = self.get_param("log_name")
+        from_pos = self.get_param("from_pos")
+        limit_offset = self.get_param("limit_offset")
+        limit_row_count = self.get_param("limit_row_count")
+
+        machine_obj = _validate_and_get_machine(bk_cloud_id, address)
+        return Response(
+            run_show_binlog_events(
+                bk_cloud_id=machine_obj.bk_cloud_id,
+                address=address,
+                machine_type=machine_obj.machine_type,
+                log_name=log_name,
+                from_pos=from_pos,
+                limit_offset=limit_offset,
+                limit_row_count=limit_row_count,
+            )
+        )
+
+
+def _validate_and_get_machine(bk_cloud_id: int | None, address: str) -> Machine:
+    """验证并获取机器对象"""
+    ip, port = address.split(":")
+    machine_q = Machine.objects.filter(ip=ip)
+
+    if not machine_q.exists():
+        raise ObjectDoesNotExist(f"机器{ip}不存在")
+
+    if machine_q.count() > 1:
+        if bk_cloud_id is None:
+            raise ValueError("Machine IP is not unique, please specify bk_cloud_id")
+        machine_q = machine_q.filter(bk_cloud_id=bk_cloud_id)
+
+    machine_obj = machine_q.get()
+
+    if machine_obj.machine_type not in [
+        MachineType.SINGLE,
+        MachineType.BACKEND,
+        MachineType.REMOTE,
+        MachineType.SPIDER,
+        MachineType.PROXY,
+    ]:
+        raise DBMMcpNotSupportMachineTypeException(machine_type=machine_obj.machine_type)
+
+    return machine_obj

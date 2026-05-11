@@ -3,6 +3,8 @@ package api
 import (
 	"bk-dbconfig/pkg/validatestruct"
 
+	"github.com/pkg/errors"
+
 	"dbm-services/common/go-pubpkg/validate"
 )
 
@@ -22,7 +24,8 @@ type ChangeConfFileDefReq struct {
 // 如果 conf_file 已经存在，则报错
 // 新建 conf_file，保存操作在 def 表，发布时进入 node 表，生成revision并发布
 type UpsertConfFilePlatReq struct {
-	RequestType
+	// 配置文件修改动作的请求类型，`SaveOnly`: 仅保存, `SaveAndPublish`保存并发布
+	ReqType string `json:"req_type" form:"req_type" validate:"enums" enums:",SaveOnly,SaveAndPublish"`
 	// 保存时如果与下层级存在冲突，提示确认，用 confirm=1 重新请求
 	Confirm int8 `json:"confirm" form:"confirm"`
 	// 发布描述，只在 req_type=SaveAndPublish 时有效
@@ -58,7 +61,7 @@ func (f *UpsertConfFilePlatReq) Validate() error {
 		}
 		valueTypeSub := validatestruct.ValueTypeDef{ValueType: c.ValueType, ValueTypeSub: c.ValueTypeSub}
 		if err := valueTypeSub.Validate(); err != nil {
-			return err
+			return errors.WithMessagef(err, c.ConfName)
 		}
 	}
 	return nil

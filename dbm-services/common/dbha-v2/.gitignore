@@ -2,3 +2,9 @@
 build
 logs
 pids
+
+**/CODE_REVIEW_SUGGESTIONS.md
+**/__pycache__/
+*.pyc
+docs/swagger.json
+docs/swagger.yaml

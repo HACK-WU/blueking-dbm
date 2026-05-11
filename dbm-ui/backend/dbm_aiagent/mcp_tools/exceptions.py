@@ -64,3 +64,27 @@ class DBMMcpClusterNotFoundException(DBMMcpBaseException):
     ERROR_CODE = ("008",)
     MESSAGE = _("集群未找到")
     MESSAGE_TPL = _("{msg}")
+
+
+class DBMMcpNotBusinessDBAPrimaryException(DBMMcpBaseException):
+    ERROR_CODE = "009"
+    MESSAGE = _("用户不是业务 DBA 主负责人")
+    MESSAGE_TPL = _("用户 {username} 不是业务 {bk_biz_id} 的 {db_type} DBA 主负责人")
+
+
+class DBMMcpBadTicketStatusException(DBMMcpBaseException):
+    ERROR_CODE = "010"
+    MESSAGE = _("单据类型不支持当前操作")
+    MESSAGE_TPL = _("{msg}")
+
+
+class DBMMcpUnsafeSQLException(DBMMcpBaseException):
+    ERROR_CODE = "011"
+    MESSAGE = _("不安全的 SQL")
+    MESSAGE_TPL = _("{msg}")
+
+
+class DBMMcpUnsafeIdentifierException(DBMMcpBaseException):
+    ERROR_CODE = "012"
+    MESSAGE = _("不安全的标识符")
+    MESSAGE_TPL = _("{msg}")

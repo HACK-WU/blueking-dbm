@@ -30,11 +30,13 @@ const redisInstallModuleRoute = createRouteItem(TicketTypes.REDIS_CLUSTER_LOAD_M
 const redisCapacityChangeRoute = createRouteItem(TicketTypes.REDIS_SCALE_UPDOWN, t('集群容量变更'));
 const redisProxyScaleUpRoute = createRouteItem(TicketTypes.REDIS_PROXY_SCALE_UP, t('扩容接入层'));
 const redisProxyScaleDownRoute = createRouteItem(TicketTypes.REDIS_PROXY_SCALE_DOWN, t('缩容接入层'));
+const redisProxyFixRoute = createRouteItem(TicketTypes.REDIS_PROXY_FIX, t('Proxy 修复'));
+const redisProxyKickoffRoute = createRouteItem(TicketTypes.REDIS_PROXY_KICKOFF, t('Proxy 剔除'));
 const redisDBCreateSlaveRoute = createRouteItem(TicketTypes.REDIS_CLUSTER_ADD_SLAVE, t('重建从库'));
 const redisMasterFailoverRoute = createRouteItem(TicketTypes.REDIS_MASTER_SLAVE_SWITCH, t('主从切换'));
 const redisDBReplaceRoute = createRouteItem(TicketTypes.REDIS_CLUSTER_CUTOFF, t('整机替换'));
-const redisClusterMigrateRoute = createRouteItem(TicketTypes.REDIS_CLUSTER_INS_MIGRATE, t('迁移'));
-const redisSingleMigrateRoute = createRouteItem(TicketTypes.REDIS_SINGLE_INS_MIGRATE, t('迁移'));
+const redisClusterMigrateRoute = createRouteItem(TicketTypes.REDIS_CLUSTER_INS_MIGRATE, t('集群架构迁移'));
+const redisSingleMigrateRoute = createRouteItem(TicketTypes.REDIS_SINGLE_INS_MIGRATE, t('主从架构迁移'));
 const redisClusterShardUpdateRoute = createRouteItem(TicketTypes.REDIS_CLUSTER_SHARD_NUM_UPDATE, t('集群分片变更'));
 const redisShardAddRoute = createRouteItem(TicketTypes.REDIS_SHARD_ADD, t('集群分片变更（Slot迁移）'));
 const redisShardReduceRoute = createRouteItem(TicketTypes.REDIS_SHARD_REDUCE, t('集群分片变更（Slot迁移）'));
@@ -128,6 +130,8 @@ const toolboxDbConsoleRouteMap = {
   'redis.toolbox.masterSlaveSwap': redisMasterFailoverRoute,
   'redis.toolbox.memoryAnalysis': redisMemoryAnalysisRoute,
   'redis.toolbox.memoryAnalysisList': redisMemoryAnalysisListRoute,
+  'redis.toolbox.proxyFix': redisProxyFixRoute,
+  'redis.toolbox.proxyKickoff': redisProxyKickoffRoute,
   'redis.toolbox.proxyScaleDown': redisProxyScaleDownRoute,
   'redis.toolbox.proxyScaleUp': redisProxyScaleUpRoute,
   'redis.toolbox.purge': redisPurgeRoute,
@@ -155,13 +159,7 @@ const toolboxRoutes = [
       name: '',
     },
     component: () => import('@views/db-manage/redis/toolbox/Index.vue'),
-    children: [
-      {
-        path: 'toolbox-result/:ticketType?/:ticketId?',
-        name: 'RedisToolboxResult',
-        component: () => import('@views/db-manage/common/toolbox-result/Index.vue'),
-      },
-    ] as RouteRecordRaw[],
+    children: [] as RouteRecordRaw[],
   },
   createRouteItem(TicketTypes.REDIS_DATACOPY_CHECK_REPAIR, t('数据校验修复')),
 ];

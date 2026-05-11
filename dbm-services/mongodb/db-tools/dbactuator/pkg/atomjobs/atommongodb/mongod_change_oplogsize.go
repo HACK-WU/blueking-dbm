@@ -95,7 +95,7 @@ func (c *MongoDChangeOplogSize) Init(runtime *jobruntime.JobGenericRuntime) erro
 	// 获取安装参数
 	c.runtime = runtime
 	c.runtime.Logger.Info("start to init")
-	c.BinDir = consts.UsrLocal
+	c.BinDir = consts.GetMongoBinDir()
 	c.Mongo = filepath.Join(c.BinDir, "mongodb", "bin", "mongo")
 	c.MongoD = filepath.Join(c.BinDir, "mongodb", "bin", "mongod")
 	c.OsUser = consts.GetProcessUser()
@@ -329,8 +329,12 @@ db.temp.drop();`
 
 // standaloneStart 单机形式启动
 func (c *MongoDChangeOplogSize) standaloneStart() error {
-	if err := common.ShutdownMongoProcess(c.OsUser, "mongod", c.BinDir, c.DbpathDir,
-		c.ConfParams.Port); err != nil {
+	if err := common.ShutdownMongoProcess(
+		c.runtime.Logger,
+		c.ConfParams.Port,
+		30*time.Second,
+		false,
+	); err != nil {
 		c.runtime.Logger.Error("shutdown mongod fail, error:%s", err)
 		return fmt.Errorf("shutdown mongod fail, error:%s", err)
 	}
@@ -364,8 +368,12 @@ func (c *MongoDChangeOplogSize) standaloneStart() error {
 
 // normalStart 正常启动
 func (c *MongoDChangeOplogSize) normalStart() error {
-	if err := common.ShutdownMongoProcess(c.OsUser, "mongod", c.BinDir, c.DbpathDir,
-		c.NewPort); err != nil {
+	if err := common.ShutdownMongoProcess(
+		c.runtime.Logger,
+		c.NewPort,
+		30*time.Second,
+		false,
+	); err != nil {
 		c.runtime.Logger.Error("shutdown mongod about port:%d fail, error:%s", c.NewPort, err)
 		return fmt.Errorf("shutdown mongod about port:%d fail, error:%s", c.NewPort, err)
 	}

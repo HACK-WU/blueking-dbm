@@ -64,12 +64,31 @@ const (
 	DbEventNameApiFailureV1             DbEventName = "dbha_call_api_fail"
 
 	// V2
-	DbEventNameDetectFailure    DbEventName = "dbha_detect_db_failure"
-	DbEventNameDetectSSHFailure DbEventName = "dbha_detect_ssh_failure"
-	DbEventNameProbeOffline     DbEventName = "dbha_probe_offline"
+	DbEventNameDetectFailure                   DbEventName = "dbha_detect_db_failure"
+	DbEventNameProbeOffline                    DbEventName = "dbha_probe_offline"
+	DbEventNameTendbhaProxyBackendFailure      DbEventName = "dbha_tendbha_proxy_backend_failure"
+	DbEventNameTendbclusterSpiderRemoteFailure DbEventName = "dbha_tendbcluster_spider_remote_failure"
 )
 
-// DbEventNameReason db event name reason
+// DbEventNameMap db event name map
+var DbEventNameMap = map[DbEventName]DbEventName{
+	DbEventNameDetectFailure:                   DbEventNameDetectFailure,
+	DbEventNameDoubleCheckSshFailureV1:         DbEventNameDoubleCheckSshFailureV1,
+	DbEventNameTendbhaProxyBackendFailure:      DbEventNameTendbhaProxyBackendFailure,
+	DbEventNameTendbclusterSpiderRemoteFailure: DbEventNameTendbclusterSpiderRemoteFailure,
+	DbEventNameProbeOffline:                    DbEventNameProbeOffline,
+}
+
+// DbEventNameList db event name list
+var DbEventNameList = []DbEventName{
+	DbEventNameDetectFailure,
+	DbEventNameDoubleCheckSshFailureV1,
+	DbEventNameTendbhaProxyBackendFailure,
+	DbEventNameTendbclusterSpiderRemoteFailure,
+	DbEventNameProbeOffline,
+}
+
+// DbEventNameReasonStr db event name reason
 type DbEventNameReasonStr string
 
 func (v DbEventNameReasonStr) String() string {
@@ -122,6 +141,7 @@ const (
 type DbType string
 
 const (
+	DbTypeNone  DbType = ""
 	DbTypeMySql DbType = "mysql"
 	DbTypeRedis DbType = "redis"
 )

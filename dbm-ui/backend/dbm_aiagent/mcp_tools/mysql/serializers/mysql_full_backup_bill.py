@@ -18,11 +18,3 @@ class SubmitBillMySQLFullBackupInputSerializer(serializers.Serializer):
     bk_biz_id = serializers.IntegerField(help_text=_("业务 id, bk_biz_id"))
     cluster_domain = serializers.CharField(help_text=_("集群域名"))
     backup_type = serializers.ChoiceField(choices=MySQLBackupTypeEnum.get_choices(), help_text=_("备份类型"))
-    # cluster_type = serializers.ChoiceField(
-    #     choices=[
-    #         (ClusterType.TenDBHA.value, ClusterType.TenDBHA.name),
-    #         # (ClusterType.TenDBSingle.value, ClusterType.TenDBSingle.name),
-    #         (ClusterType.TenDBCluster.value, ClusterType.TenDBCluster.name)
-    #     ],
-    #     help_text=_("集群类型, 只能是 tendbha, tendbcluster"),
-    # )

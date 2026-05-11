@@ -37,6 +37,9 @@ from backend.flow.plugins.components.collections.common.display_semantic_check_i
     DisplaySemanticCheckInfoComponent,
 )
 from backend.flow.plugins.components.collections.mysql.exec_actuator_script import ExecuteDBActuatorScriptComponent
+from backend.flow.plugins.components.collections.mysql.exec_actuator_script_with_bk_job_record import (
+    ExecuteDBActuatorScriptWithBkJobRecordComponent,
+)
 from backend.flow.plugins.components.collections.mysql.semantic_check import SemanticCheckComponent
 from backend.flow.plugins.components.collections.mysql.trans_flies import TransFileComponent
 from backend.flow.utils.mysql.mysql_act_dataclass import DownloadMediaKwargs, ExecActuatorKwargs
@@ -183,13 +186,13 @@ class ImportSQLFlow(object):
             else:
                 sub_pipeline.add_act(
                     act_name=_("执行SQL导入"),
-                    act_component_code=ExecuteDBActuatorScriptComponent.code,
+                    act_component_code=ExecuteDBActuatorScriptWithBkJobRecordComponent.code,
                     kwargs=asdict(
                         ExecActuatorKwargs(
                             job_timeout=LONG_JOB_TIMEOUT,
                             exec_ip=master_ctl_addr.split(IP_PORT_DIVIDER)[0],
                             bk_cloud_id=cluster.bk_cloud_id,
-                            cluster={"port": int(master_ctl_addr.split(IP_PORT_DIVIDER)[1])},
+                            cluster={"cluster_id": cluster.id, "port": int(master_ctl_addr.split(IP_PORT_DIVIDER)[1])},
                             get_mysql_payload_func=MysqlActPayload.get_import_sqlfile_payload.__name__,
                         )
                     ),
@@ -230,7 +233,10 @@ class ImportSQLFlow(object):
         start_mysqld_configs = self.__get_instance_start_config(
             ip=remotedb_ip, port=remotedb_port, bk_cloud_id=cluster["bk_cloud_id"]
         )
-
+        # 获取 tdbctl 的启动配置
+        tdbctl_start_configs = self.__get_instance_start_config(
+            ip=cluster["master_ctl_ip"], port=cluster["port"], bk_cloud_id=cluster["bk_cloud_id"]
+        )
         # 添加单据信息回显节点
         semantic_check_pipeline.add_act(
             act_name=_("回显SQL语义检测单据信息"),
@@ -286,6 +292,7 @@ class ImportSQLFlow(object):
                     "schema_sql_file": self.semantic_dump_schema_file_name,
                     "execute_objects": self.data["execute_objects"],
                     "mysql_start_config": start_mysqld_configs,
+                    "tdbctl_start_configs": tdbctl_start_configs,
                 },
             },
         )
@@ -307,7 +314,7 @@ class ImportSQLFlow(object):
 
     def __get_master_ctl_info(self, cluster_id: int) -> dict:
         cluster = Cluster.objects.get(id=cluster_id)
-        logger.info("get ")
+        logger.info("get master ctl info: {}".format(cluster))
         master_ctl_addr = cluster.tendbcluster_ctl_primary_address()
         master_ctl_ip = master_ctl_addr.split(IP_PORT_DIVIDER)[0]
         master_ctl_port = master_ctl_addr.split(IP_PORT_DIVIDER)[1]

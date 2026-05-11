@@ -30,6 +30,7 @@ from backend.db_services.ipchooser.query.resource import ResourceQueryHelper
 from backend.ticket.constants import TicketType
 from backend.ticket.models import Ticket
 from backend.utils.cache import func_cache_decorator
+from backend.utils.excel import ExcelHandler
 
 
 class ClusterSpecFilter(object):
@@ -667,6 +668,31 @@ class ResourceHandler(object):
         }
 
     @classmethod
+    def get_replenish_ticket_apply_info_map(cls, ticket_ids: List[int], runtime_info: bool = False) -> Dict[int, Dict]:
+        """获取补货单据申请/交付信息映射"""
+        tickets = Ticket.objects.prefetch_related("flows").filter(
+            id__in=ticket_ids, ticket_type=TicketType.RESOURCE_HCM_REPLENISH.value
+        )
+        replenish_records = ResourceReplenishRecord.objects.all().values("ticket_ids", "id")
+        ticket_replenish_map = {tid: record["id"] for record in replenish_records for tid in record["ticket_ids"]}
+
+        ticket_apply_count_map = {}
+        for ticket in tickets:
+            inner_flow = list(ticket.flows.all())[-1]
+            delivery_count = len(inner_flow.output_data[0]["values"]) if inner_flow and inner_flow.output_data else 0
+            info = {
+                "apply_count": ticket.details.get("count", 0),
+                "delivery_count": delivery_count,
+                "details": ticket.details,
+                "record_id": ticket_replenish_map.get(ticket.id, ""),
+            }
+            if runtime_info:
+                info.update({"ticket": ticket, "inner_flow": inner_flow})
+            ticket_apply_count_map[ticket.id] = info
+
+        return ticket_apply_count_map
+
+    @classmethod
     def get_evnet_info(cls, bk_host_ids, remark, host_id_ip_map):
         from backend.db_services.dbresource.constants import RESOURCE_UPDATE_REMARK
 
@@ -692,3 +718,58 @@ class ResourceHandler(object):
             hosts.append({"ip": host_id_ip_map[str(host_id)], "bk_host_id": host_id})
 
         return remark_map, hosts
+
+    @classmethod
+    def resource_export(cls, params):
+        data_list = []
+        headers = [
+            {"id": "ip", "name": _("IP")},
+            {"id": "bk_cloud_name", "name": _("管控区域")},
+            {"id": "agent_status", "name": _("Agent 状态")},
+            {"id": "bk_biz_name", "name": _("所属业务")},
+            {"id": "resource_type", "name": _("所属DB")},
+            {"id": "labels", "name": _("资源标签")},
+            {"id": "city", "name": _("地域")},
+            {"id": "sub_zone", "name": _("园区")},
+            {"id": "rack_id", "name": _("机架")},
+            {"id": "os_type", "name": _("操作系统类型")},
+            {"id": "os_name", "name": _("操作系统名称")},
+            {"id": "device_class", "name": _("机型")},
+            {"id": "bk_cpu", "name": _("CPU(核)")},
+            {"id": "bk_mem", "name": _("内存(G)")},
+            {"id": "total_data_storage_cap", "name": _("数据盘容量（G）")},
+            {"id": "create_time", "name": _("转入时间")},
+            {"id": "operator", "name": _("转入人")},
+        ]
+
+        resource_res = cls.resource_list(params)
+        results = resource_res["results"]
+        if results:
+            for res in results:
+                data_list.append(
+                    {
+                        "ip": res["ip"],
+                        "bk_cloud_name": res["bk_cloud_name"],
+                        "agent_status": _("正常") if res["agent_status"] == 1 else _("异常"),
+                        "bk_biz_name": _("公共资源池")
+                        if res["for_biz"]["bk_biz_id"] == 0
+                        else res["for_biz"]["bk_biz_name"],
+                        "resource_type": _("通用") if res["resource_type"] == "PUBLIC" else res["resource_type"],
+                        "labels": " ".join(label["name"] for label in res["labels"]),
+                        "city": res["city"],
+                        "sub_zone": res["sub_zone"],
+                        "rack_id": res["rack_id"],
+                        "os_type": res["os_type"],
+                        "os_name": res["os_name"],
+                        "device_class": res["device_class"],
+                        "bk_cpu": res["bk_cpu"],
+                        "bk_mem": round(res["bk_mem"] / 1024, 2),
+                        "total_data_storage_cap": res.get("total_data_storage_cap", 0),
+                        "create_time": res["create_time"],
+                        "operator": res["operator"],
+                    }
+                )
+
+        wb = ExcelHandler.serialize(data_list, headers=headers, match_header=True)
+
+        return ExcelHandler.response(wb, "dbm_resource_list.xlsx")
